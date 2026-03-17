@@ -24,49 +24,60 @@ st.set_page_config(
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&display=swap');
 
-/* Header */
+/* ── Global background ── */
+.stApp {
+    background-color: #F7F7F5 !important;
+}
+
+/* ── Main Header (Creator Engine style) ── */
 .main-header {
     text-align: center;
-    padding: 1.5rem 0 0.5rem 0;
+    padding: 2.5rem 0 1rem 0;
+}
+.main-header .brand-name {
+    font-size: 0.85rem;
+    color: #191970;
+    letter-spacing: 0.35em;
+    font-weight: 600;
+    margin-bottom: 0.3rem;
 }
 .main-header h1 {
     font-family: 'Playfair Display', serif;
-    font-size: 2.2rem;
+    font-size: 2.8rem;
+    font-weight: 900;
     color: #191970;
-    margin-bottom: 0.2rem;
+    margin: 0.2rem 0 0;
     letter-spacing: 0.02em;
+    display: inline-block;
+    border-bottom: 4px solid #f5c842;
+    padding-bottom: 0.3rem;
 }
-.main-header .subtitle {
-    font-size: 0.95rem;
-    color: #888;
-    letter-spacing: 0.05em;
-}
-.brand-tag {
-    text-align: center;
-    font-size: 0.75rem;
-    color: #bbb;
-    margin-top: 0.2rem;
-    letter-spacing: 0.1em;
+.main-header .tagline {
+    font-size: 0.78rem;
+    color: #999;
+    letter-spacing: 0.3em;
+    margin-top: 0.7rem;
+    font-weight: 400;
 }
 
-/* Section headers */
+/* ── Section headers (yellow bar) ── */
 .section-header {
-    background: linear-gradient(90deg, #f5c842 0%, #f5c842 100%);
+    background: #f5c842;
     color: #191970;
-    padding: 0.45rem 1rem;
+    padding: 0.5rem 1.1rem;
     border-radius: 6px;
     font-weight: 700;
     font-size: 0.95rem;
-    margin: 1.2rem 0 0.8rem 0;
+    margin: 1.5rem 0 0.8rem 0;
     letter-spacing: 0.03em;
 }
 
-/* Result box */
+/* ── Result box ── */
 .result-box {
-    background: #fafafa;
-    border: 1px solid #e0e0e0;
+    background: #fff;
+    border: 1px solid #ddd;
     border-radius: 8px;
     padding: 1.2rem;
     font-family: 'Courier New', monospace;
@@ -77,7 +88,7 @@ st.markdown("""
     overflow-y: auto;
 }
 
-/* Page chip */
+/* ── Page chip ── */
 .page-chip {
     display: inline-block;
     background: #191970;
@@ -89,7 +100,7 @@ st.markdown("""
     margin-bottom: 0.5rem;
 }
 
-/* Character map table */
+/* ── Character map table ── */
 .char-table {
     width: 100%;
     border-collapse: collapse;
@@ -99,19 +110,19 @@ st.markdown("""
 .char-table th {
     background: #191970;
     color: #f5c842;
-    padding: 0.4rem 0.8rem;
+    padding: 0.45rem 0.8rem;
     text-align: left;
     font-weight: 600;
 }
 .char-table td {
-    padding: 0.35rem 0.8rem;
-    border-bottom: 1px solid #eee;
+    padding: 0.4rem 0.8rem;
+    border-bottom: 1px solid #e8e8e0;
 }
 .char-table tr:nth-child(even) td {
-    background: #f8f8f8;
+    background: #EEEEF6;
 }
 
-/* Progress */
+/* ── Progress ── */
 .progress-text {
     text-align: center;
     color: #666;
@@ -119,15 +130,32 @@ st.markdown("""
     padding: 0.5rem 0;
 }
 
-/* Footer */
+/* ── Footer ── */
 .footer {
     text-align: center;
-    color: #ccc;
+    color: #bbb;
     font-size: 0.72rem;
-    margin-top: 2rem;
+    margin-top: 2.5rem;
     padding: 1rem 0;
-    border-top: 1px solid #eee;
-    letter-spacing: 0.05em;
+    border-top: 1px solid #ddd;
+    letter-spacing: 0.08em;
+}
+
+/* ── Streamlit overrides for cream theme ── */
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea,
+.stSelectbox > div > div {
+    background-color: #fff !important;
+    border-color: #ddd !important;
+}
+div[data-testid="stFileUploader"] {
+    background-color: #fff !important;
+    border-radius: 8px;
+}
+.stExpander {
+    background-color: #fff !important;
+    border-color: #ddd !important;
+    border-radius: 8px !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -407,20 +435,25 @@ def translate_page(client, text: str, page_num: int, total_pages: int,
 # Header
 st.markdown("""
 <div class="main-header">
-    <h1>🎬 English-Translator</h1>
-    <div class="subtitle">KOREAN → ENGLISH — Structure-Preserving Translation</div>
+    <div class="brand-name">B L U E &nbsp; J E A N S &nbsp; P I C T U R E S</div>
+    <h1>ENGLISH-TRANSLATOR</h1>
+    <div class="tagline">Y O U N G &nbsp; · &nbsp; V I N T A G E &nbsp; · &nbsp; F R E E &nbsp; · &nbsp; I N N O V A T I V E</div>
 </div>
-<div class="brand-tag">BLUE JEANS PICTURES</div>
 """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-# API Key
-api_key = st.text_input(
-    "🔑 Anthropic API Key",
-    type="password",
-    help="Claude API 키를 입력하세요. (sk-ant-...)"
-)
+# API Key — Streamlit Secrets 우선, 없으면 직접 입력
+api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+
+if api_key:
+    st.success("🔑 API Key 연결됨 (Secrets)")
+else:
+    api_key = st.text_input(
+        "🔑 Anthropic API Key",
+        type="password",
+        help="Claude API 키를 입력하세요. (sk-ant-...) 또는 Streamlit Secrets에 ANTHROPIC_API_KEY를 설정하세요."
+    )
 
 # ─── Model Selection ───
 st.markdown('<div class="section-header">🤖 MODEL — 번역 모델 선택</div>', unsafe_allow_html=True)

@@ -1,5 +1,5 @@
 """
-BLUE JEANS PICTURES — Screenplay Translator
+BLUE JEANS PICTURES — English-Translator
 한국어 시나리오 → 영어 번역 (구조 보존)
 Powered by Anthropic Claude API
 """
@@ -14,7 +14,7 @@ import time
 # PAGE CONFIG
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="Screenplay Translator | BLUE JEANS PICTURES",
+    page_title="English-Translator | BLUE JEANS PICTURES",
     page_icon="🎬",
     layout="wide",
 )
@@ -34,7 +34,7 @@ st.markdown("""
 .main-header h1 {
     font-family: 'Playfair Display', serif;
     font-size: 2.2rem;
-    color: #1a1a2e;
+    color: #191970;
     margin-bottom: 0.2rem;
     letter-spacing: 0.02em;
 }
@@ -54,7 +54,7 @@ st.markdown("""
 /* Section headers */
 .section-header {
     background: linear-gradient(90deg, #f5c842 0%, #f5c842 100%);
-    color: #1a1a2e;
+    color: #191970;
     padding: 0.45rem 1rem;
     border-radius: 6px;
     font-weight: 700;
@@ -80,7 +80,7 @@ st.markdown("""
 /* Page chip */
 .page-chip {
     display: inline-block;
-    background: #1a1a2e;
+    background: #191970;
     color: #f5c842;
     padding: 0.2rem 0.7rem;
     border-radius: 12px;
@@ -114,7 +114,24 @@ st.markdown("""
 # CONSTANTS
 # ─────────────────────────────────────────────
 MAX_CHARS_PER_PAGE = 8000  # ~4000 Korean chars ≈ safe for one API call
-MODEL = "claude-sonnet-4-20250514"
+
+MODEL_OPTIONS = {
+    "⚡ Haiku — 빠르고 저렴 (~$0.1/편)": {
+        "id": "claude-haiku-4-5-20251001",
+        "max_tokens": 8000,
+        "desc": "기본 구조 보존 + 빠른 속도. 초벌 번역·확인용에 적합.",
+    },
+    "✦ Sonnet — 균형 잡힌 품질 (~$1/편)": {
+        "id": "claude-sonnet-4-20250514",
+        "max_tokens": 8000,
+        "desc": "높은 번역 품질 + 합리적 비용. 대부분의 작업에 추천.",
+    },
+    "🏆 Opus — 최고 품질 (~$5/편)": {
+        "id": "claude-opus-4-20250514",
+        "max_tokens": 8000,
+        "desc": "프리미엄 번역. 해외 공동제작 패키지·영화제 제출용.",
+    },
+}
 
 SYSTEM_PROMPT = """You are an expert Korean-to-English screenplay translator for the international film market.
 
@@ -222,15 +239,15 @@ def split_into_pages(text: str, max_chars: int = MAX_CHARS_PER_PAGE) -> list[str
     return pages
 
 
-def translate_page(client, text: str, page_num: int, total_pages: int) -> str:
+def translate_page(client, text: str, page_num: int, total_pages: int, model_id: str, max_tokens: int) -> str:
     """Translate a single page of screenplay text via Claude API."""
     context = ""
     if total_pages > 1:
         context = f"\n\n[Translator context: This is page {page_num} of {total_pages}. Maintain consistency with previous pages.]"
 
     message = client.messages.create(
-        model=MODEL,
-        max_tokens=8000,
+        model=model_id,
+        max_tokens=max_tokens,
         system=SYSTEM_PROMPT,
         messages=[
             {
@@ -249,7 +266,7 @@ def translate_page(client, text: str, page_num: int, total_pages: int) -> str:
 # Header
 st.markdown("""
 <div class="main-header">
-    <h1>🎬 Screenplay Translator</h1>
+    <h1>🎬 English-Translator</h1>
     <div class="subtitle">KOREAN → ENGLISH — Structure-Preserving Translation</div>
 </div>
 <div class="brand-tag">BLUE JEANS PICTURES</div>
@@ -263,6 +280,18 @@ api_key = st.text_input(
     type="password",
     help="Claude API 키를 입력하세요. (sk-ant-...)"
 )
+
+# Model Selection
+st.markdown('<div class="section-header">🤖 MODEL — 번역 모델 선택</div>', unsafe_allow_html=True)
+
+model_choice = st.radio(
+    "번역 모델을 선택하세요:",
+    list(MODEL_OPTIONS.keys()),
+    index=1,  # default: Sonnet
+    help="모델에 따라 번역 품질과 비용이 달라집니다."
+)
+selected_model = MODEL_OPTIONS[model_choice]
+st.caption(f"📌 {selected_model['desc']}")
 
 # ─── Input Method ───
 st.markdown('<div class="section-header">📥 INPUT — 시나리오 입력</div>', unsafe_allow_html=True)
@@ -351,7 +380,7 @@ if st.button("🚀 번역 시작", type="primary", disabled=not can_translate, u
         status_area.markdown(f'<div class="progress-text">🔄 페이지 {page_num}/{total} 번역 중...</div>', unsafe_allow_html=True)
 
         try:
-            result = translate_page(client, page, page_num, total)
+            result = translate_page(client, page, page_num, total, selected_model["id"], selected_model["max_tokens"])
             translated_pages.append(result)
         except anthropic.APIError as e:
             st.error(f"❌ API 오류 (페이지 {page_num}): {e}")
@@ -423,7 +452,7 @@ if "translation_result" in st.session_state:
 # Footer
 st.markdown("""
 <div class="footer">
-    BLUE JEANS PICTURES — Screenplay Translator v1.0<br>
+    BLUE JEANS PICTURES — English-Translator v1.0<br>
     Powered by Anthropic Claude API
 </div>
 """, unsafe_allow_html=True)

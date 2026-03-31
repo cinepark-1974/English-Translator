@@ -243,29 +243,45 @@ STYLE_PRESETS = {
     },
 }
 
-BASE_SYSTEM_PROMPT = """You are an expert Korean-to-English screenplay translator for the international film market.
+BASE_SYSTEM_PROMPT = """You are an expert Korean-to-English screenplay translator for Hollywood submission.
+
+## OUTPUT FORMAT — STANDARD HOLLYWOOD SCREENPLAY
+You must output text in proper American screenplay format so it can be auto-parsed into a formatted DOCX.
+
+**Scene headers:**
+- Format: `INT. LOCATION — TIME` or `EXT. LOCATION — TIME`
+- Convert Korean scene numbers (S#1, 씬1 등) into this format. Drop the Korean numbering prefix.
+- ALL CAPS for the entire line.
+- Always start with INT. / EXT. / INT./EXT.
+
+**Character names (dialogue cue):**
+- ALL CAPS, on its own line, centered.
+- Parenthetical extensions on the same line: `HARRY (V.O.)` or `JANIN (O.S.)`
+
+**Parentheticals:**
+- On its own line between character name and dialogue: `(whispering)`
+- Always in lowercase inside parentheses.
+
+**Dialogue:**
+- Follows character name (or parenthetical). Normal case.
+- One blank line after dialogue block before next element.
+
+**Action / stage directions:**
+- Present tense, visual. Standard prose paragraphs.
+- One blank line between action paragraphs.
+- Character first appearance: NAME in ALL CAPS with age, e.g., `HARRY (27) sorts luggage.`
+
+**Transitions:**
+- `CUT TO:`, `FADE IN:`, `FADE OUT.`, `SMASH CUT:` etc.
+- On its own line.
 
 ## RULES — ABSOLUTE
-1. **Preserve ALL structural formatting exactly:**
-   - Scene headers (S#, 씬, SCENE numbers) → keep numbering, translate location/time
-   - Parenthetical directions: (O.L.), (E), (NA), CUT TO, FADE IN, etc. → keep as-is or use standard English equivalents
-   - Stage directions / 지문 → translate into professional English action lines
-   - Dialogue → translate into natural, cinematic English dialogue
-   - Line breaks, indentation patterns, blank lines → preserve exactly
-
-2. **Translation quality:**
-   - Produce **professional, production-grade English** suitable for international co-production packages
-   - Dialogue must sound natural and spoken — not literary or stiff
-   - Action lines must be vivid, present-tense, visual — standard screenplay style
-   - Preserve the emotional tone, subtext, and rhythm of the original
-
-3. **DO NOT:**
-   - Add scene numbers or formatting that doesn't exist in the original
-   - Remove any structural element
-   - Add commentary, notes, or explanations
-   - Merge or split scenes
-
-4. **Output ONLY the translated screenplay text.** No preamble, no closing remarks."""
+1. Preserve the story structure exactly — do not merge, split, add, or remove scenes.
+2. Produce professional, production-grade English suitable for Hollywood submission packages.
+3. Dialogue must sound natural and spoken — not literary or stiff.
+4. Action lines must be vivid, present-tense, visual.
+5. Preserve the emotional tone, subtext, and rhythm of the original.
+6. **Output ONLY the translated screenplay text.** No preamble, no closing remarks, no page numbers."""
 
 
 # ─────────────────────────────────────────────
@@ -676,16 +692,174 @@ if "translation_result" in st.session_state:
     with col2:
         try:
             from docx import Document
-            from docx.shared import Pt
+            from docx.shared import Pt, Inches, Cm, RGBColor
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from docx.enum.section import WD_ORIENT
 
             doc = Document()
-            style = doc.styles['Normal']
-            font = style.font
-            font.name = 'Courier New'
-            font.size = Pt(12)
 
-            for line in result.split("\n"):
-                doc.add_paragraph(line)
+            # ─── Page Setup: US Letter ───
+            section = doc.sections[0]
+            section.page_width = Cm(21.0)    # A4
+            section.page_height = Cm(29.7)   # A4
+            section.left_margin = Cm(2.0)
+            section.right_margin = Cm(2.0)
+            section.top_margin = Cm(2.0)
+            section.bottom_margin = Cm(2.0)
+
+            # ─── Base Style: Courier New 12pt (industry standard) ───
+            style_normal = doc.styles['Normal']
+            style_normal.font.name = 'Courier New'
+            style_normal.font.size = Pt(12)
+            style_normal.paragraph_format.space_after = Pt(0)
+            style_normal.paragraph_format.space_before = Pt(0)
+            style_normal.paragraph_format.line_spacing = 1.0
+
+            # ─── Scene Header Style ───
+            style_scene = doc.styles.add_style('SceneHeader', 1)  # 1 = paragraph
+            style_scene.font.name = 'Courier New'
+            style_scene.font.size = Pt(12)
+            style_scene.font.bold = True
+            style_scene.font.all_caps = True
+            style_scene.paragraph_format.space_before = Pt(24)
+            style_scene.paragraph_format.space_after = Pt(12)
+            style_scene.paragraph_format.line_spacing = 1.0
+
+            # ─── Character Name Style ───
+            style_char = doc.styles.add_style('CharacterName', 1)
+            style_char.font.name = 'Courier New'
+            style_char.font.size = Pt(12)
+            style_char.font.bold = True
+            style_char.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            style_char.paragraph_format.space_before = Pt(12)
+            style_char.paragraph_format.space_after = Pt(0)
+            style_char.paragraph_format.line_spacing = 1.0
+
+            # ─── Dialogue Style ───
+            style_dial = doc.styles.add_style('Dialogue', 1)
+            style_dial.font.name = 'Courier New'
+            style_dial.font.size = Pt(12)
+            style_dial.paragraph_format.left_indent = Inches(1.5)
+            style_dial.paragraph_format.right_indent = Inches(1.5)
+            style_dial.paragraph_format.space_after = Pt(0)
+            style_dial.paragraph_format.space_before = Pt(0)
+            style_dial.paragraph_format.line_spacing = 1.0
+
+            # ─── Parenthetical Style ───
+            style_paren = doc.styles.add_style('Parenthetical', 1)
+            style_paren.font.name = 'Courier New'
+            style_paren.font.size = Pt(12)
+            style_paren.paragraph_format.left_indent = Inches(2.0)
+            style_paren.paragraph_format.right_indent = Inches(2.0)
+            style_paren.paragraph_format.space_after = Pt(0)
+            style_paren.paragraph_format.space_before = Pt(0)
+            style_paren.paragraph_format.line_spacing = 1.0
+
+            # ─── Action (Stage Direction) Style ───
+            style_action = doc.styles.add_style('Action', 1)
+            style_action.font.name = 'Courier New'
+            style_action.font.size = Pt(12)
+            style_action.paragraph_format.space_before = Pt(12)
+            style_action.paragraph_format.space_after = Pt(0)
+            style_action.paragraph_format.line_spacing = 1.0
+
+            # ─── Transition Style ───
+            style_trans = doc.styles.add_style('Transition', 1)
+            style_trans.font.name = 'Courier New'
+            style_trans.font.size = Pt(12)
+            style_trans.font.bold = True
+            style_trans.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            style_trans.paragraph_format.space_before = Pt(12)
+            style_trans.paragraph_format.space_after = Pt(12)
+            style_trans.paragraph_format.line_spacing = 1.0
+
+            # ─── Parse and format ───
+            import re as _re
+
+            # Patterns
+            SCENE_RE = _re.compile(
+                r'^(?:S\s*#?\s*\d+\.?\s*)?'
+                r'(INT\.|EXT\.|INT\./EXT\.|EXT\./INT\.|I/E\.|E/I\.)',
+                _re.IGNORECASE
+            )
+            TRANSITION_RE = _re.compile(
+                r'^(FADE\s+IN:|FADE\s+OUT\.?|CUT\s+TO:|SMASH\s+CUT:|MATCH\s+CUT:|'
+                r'DISSOLVE\s+TO:|JUMP\s+CUT:|TIME\s+CUT:|FADE\s+TO\s+BLACK\.?|'
+                r'THE\s+END\.?)$',
+                _re.IGNORECASE
+            )
+            CHAR_RE = _re.compile(
+                r'^([A-Z][A-Z0-9\s\.\-\']+?)(\s*\(.*\))?\s*$'
+            )
+            PAREN_RE = _re.compile(r'^\(.*\)\s*$')
+
+            lines = result.split('\n')
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                stripped = line.strip()
+
+                # Empty line → skip (spacing handled by styles)
+                if not stripped:
+                    i += 1
+                    continue
+
+                # Scene header
+                if SCENE_RE.match(stripped):
+                    doc.add_paragraph(stripped, style='SceneHeader')
+                    i += 1
+                    continue
+
+                # Transition
+                if TRANSITION_RE.match(stripped):
+                    doc.add_paragraph(stripped, style='Transition')
+                    i += 1
+                    continue
+
+                # Character name detection:
+                # ALL CAPS line followed by dialogue or parenthetical
+                if CHAR_RE.match(stripped) and len(stripped) < 60:
+                    # Check next non-empty line
+                    next_i = i + 1
+                    while next_i < len(lines) and not lines[next_i].strip():
+                        next_i += 1
+
+                    if next_i < len(lines):
+                        next_line = lines[next_i].strip()
+                        # If next line is parenthetical or looks like dialogue
+                        is_dialogue_follows = (
+                            PAREN_RE.match(next_line) or
+                            (next_line and not SCENE_RE.match(next_line)
+                             and not TRANSITION_RE.match(next_line)
+                             and not CHAR_RE.match(next_line))
+                        )
+                        if is_dialogue_follows:
+                            doc.add_paragraph(stripped, style='CharacterName')
+                            i += 1
+                            # Process dialogue lines until empty line or new element
+                            while i < len(lines):
+                                dl = lines[i].strip()
+                                if not dl:
+                                    break
+                                if SCENE_RE.match(dl) or TRANSITION_RE.match(dl):
+                                    break
+                                if CHAR_RE.match(dl) and len(dl) < 60:
+                                    # Check if this is a new character
+                                    peek = i + 1
+                                    while peek < len(lines) and not lines[peek].strip():
+                                        peek += 1
+                                    if peek < len(lines) and lines[peek].strip():
+                                        break
+                                if PAREN_RE.match(dl):
+                                    doc.add_paragraph(dl, style='Parenthetical')
+                                else:
+                                    doc.add_paragraph(dl, style='Dialogue')
+                                i += 1
+                            continue
+
+                # Default: Action/stage direction
+                doc.add_paragraph(stripped, style='Action')
+                i += 1
 
             buf = io.BytesIO()
             doc.save(buf)

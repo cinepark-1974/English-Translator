@@ -547,7 +547,7 @@ def generate_docx(text: str) -> bytes:
     style_scene.font.size = Pt(12)
     style_scene.font.bold = True
     style_scene.font.all_caps = True
-    style_scene.paragraph_format.space_before = Pt(24)
+    style_scene.paragraph_format.space_before = Pt(36)   # 씬 사이 빈 줄 효과
     style_scene.paragraph_format.space_after = Pt(12)
     style_scene.paragraph_format.line_spacing = 1.0
 
@@ -824,6 +824,16 @@ with st.expander("📋 인물표 파일 예시 보기"):
 
 st.markdown('<div class="section-header">📥 INPUT — 시나리오 입력 (한국어)</div>', unsafe_allow_html=True)
 
+# Project title for filename
+project_title = st.text_input(
+    "🎬 프로젝트 제목 (파일명에 사용됩니다)",
+    value=st.session_state.get("project_title", ""),
+    placeholder="예: TAKEOFF, 왕게임, 물귀신...",
+    help="다운로드 파일명이 Screenplay_제목_translated 형태로 생성됩니다.",
+)
+if project_title:
+    st.session_state["project_title"] = project_title
+
 input_method = st.radio(
     "입력 방식:",
     ["📎 파일 업로드", "📝 텍스트 붙여넣기"],
@@ -843,6 +853,13 @@ if input_method == "📎 파일 업로드":
         with st.spinner("파일 읽는 중..."):
             source_text = read_uploaded_file(uploaded)
         if source_text:
+            # 파일명에서 제목 추출 (확장자 제거, 날짜/버전 태그 정리)
+            import os
+            raw_name = os.path.splitext(uploaded.name)[0]
+            # 간단 정리: 언더스코어/하이픈 → 공간으로, 앞뒤 공백 제거
+            clean_title = re.sub(r'[\s_-]+', '_', raw_name).strip('_')
+            st.session_state["project_title"] = clean_title
+
             st.success(f"✅ 파일 로드 완료 — {len(source_text):,}자")
             with st.expander("📄 원문 미리보기", expanded=False):
                 st.text(source_text[:3000] + ("..." if len(source_text) > 3000 else ""))
@@ -1140,6 +1157,16 @@ if final_result:
     st.markdown("---")
     st.markdown('<div class="section-header">📤 FINAL OUTPUT — 최종 다운로드</div>', unsafe_allow_html=True)
 
+    # Build filename with project title
+    title_slug = st.session_state.get("project_title", "").strip()
+    if title_slug:
+        # 안전한 파일명으로 변환
+        title_slug = re.sub(r'[^\w\s\-]', '', title_slug).strip()
+        title_slug = re.sub(r'[\s]+', '_', title_slug)
+        base_filename = f"Screenplay_{title_slug}_translated"
+    else:
+        base_filename = "Screenplay_translated"
+
     # Show which stage this is from
     if st.session_state.get("stage_4_result"):
         st.caption("✅ Stage 4 (Dialogue Polish) 결과 기준")
@@ -1156,7 +1183,7 @@ if final_result:
         st.download_button(
             "📥 TXT 다운로드",
             data=final_result.encode("utf-8"),
-            file_name="screenplay_translated.txt",
+            file_name=f"{base_filename}.txt",
             mime="text/plain",
             use_container_width=True,
             key="dl_final_txt",
@@ -1168,7 +1195,7 @@ if final_result:
             st.download_button(
                 "📥 DOCX 다운로드 (할리우드 포맷)",
                 data=docx_bytes,
-                file_name="screenplay_translated.docx",
+                file_name=f"{base_filename}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True,
                 key="dl_final_docx",

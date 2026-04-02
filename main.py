@@ -24,7 +24,6 @@ from prompt import (
     STYLE_PRESETS,
     CHARACTER_TONE_TAGS,
     MODEL_POLICY,
-    COST_ESTIMATES,
     STAGE_2_FORMAT_RULES,
     build_stage1_prompt,
     build_stage3_prompt,
@@ -259,29 +258,6 @@ div[data-testid="stFileUploader"] {
 # ─────────────────────────────────────────────
 MAX_CHARS_PER_PAGE = 8000
 VERSION = "2.0"
-
-PIPELINE_MODES = {
-    "🚀 Full Pipeline — 전체 5단계": {
-        "id": "full",
-        "stages": [1, 2, 3, 4, 5],
-        "desc": "번역 → 포맷 → 문체 리라이트 → 대사 폴리시 → QA. 최고 품질.",
-    },
-    "⚡ Quick Translation — 빠른 번역": {
-        "id": "quick",
-        "stages": [1, 2],
-        "desc": "번역 + 포맷 변환만. 초벌 확인용. 빠르고 저렴.",
-    },
-    "✍️ Rewrite Only — 리라이트만": {
-        "id": "rewrite",
-        "stages": [3, 4],
-        "desc": "이미 영어 번역된 시나리오의 문체 + 대사만 폴리시.",
-    },
-    "🔍 QA Only — 검수만": {
-        "id": "qa",
-        "stages": [5],
-        "desc": "이미 완성된 영문 시나리오의 품질 검증 리포트.",
-    },
-}
 
 
 # ─────────────────────────────────────────────
@@ -697,32 +673,6 @@ def generate_docx(text: str) -> bytes:
     return buf.getvalue()
 
 
-# ─────────────────────────────────────────────
-# STAGE PROGRESS DISPLAY
-# ─────────────────────────────────────────────
-
-def render_stage_badges(active_stages: list, current_stage: int, completed: list):
-    """Render stage progress badges."""
-    stage_names = {
-        1: "① Raw Translation",
-        2: "② Format",
-        3: "③ Voice Rewrite",
-        4: "④ Dialogue Polish",
-        5: "⑤ QA Check",
-    }
-    badges = []
-    for s in [1, 2, 3, 4, 5]:
-        if s not in active_stages:
-            continue
-        if s in completed:
-            css = "stage-done"
-        elif s == current_stage:
-            css = "stage-active"
-        else:
-            css = "stage-pending"
-        badges.append(f'<span class="stage-badge {css}">{stage_names[s]}</span>')
-    return " ".join(badges)
-
 
 # ═══════════════════════════════════════════════════
 # UI
@@ -760,30 +710,6 @@ st.markdown('<div class="section-header">⚙️ SETTINGS — 번역 설정</div>
 col_left, col_right = st.columns(2)
 
 with col_left:
-    # ── Pipeline Mode ──
-    st.markdown("**파이프라인 모드**")
-    mode_choice = st.radio(
-        "실행 모드를 선택하세요:",
-        list(PIPELINE_MODES.keys()),
-        index=0,
-        label_visibility="collapsed",
-    )
-    selected_mode = PIPELINE_MODES[mode_choice]
-    st.caption(f"📌 {selected_mode['desc']}")
-
-    # Cost estimate
-    cost_key = {
-        "full": "full_pipeline",
-        "quick": "quick_mode",
-        "rewrite": "stage_3_only",
-        "qa": "stage_5_only",
-    }.get(selected_mode["id"], "full_pipeline")
-    st.markdown(
-        f'<span class="cost-chip">💰 예상 비용: {COST_ESTIMATES[cost_key]}</span>',
-        unsafe_allow_html=True
-    )
-
-with col_right:
     # ── Region ──
     st.markdown("**타겟 지역**")
     region_choice = st.selectbox(
@@ -795,6 +721,7 @@ with col_right:
     selected_region = REGION_PROFILES[region_choice]
     st.caption(f"📌 {selected_region['desc']} · {selected_region['format_note']}")
 
+with col_right:
     # ── Style ──
     st.markdown("**장르 스타일**")
     style_choice = st.selectbox(
@@ -814,18 +741,14 @@ custom_instructions = st.text_area(
 )
 
 # ── Pipeline Info ──
-stages = selected_mode["stages"]
-stage_models = []
-for s in stages:
-    if s == 2:
-        stage_models.append("Stage 2: 규칙 기반 (API 호출 없음)")
-    elif s in MODEL_POLICY:
-        mp = MODEL_POLICY[f"stage_{s}"]
-        stage_models.append(f"Stage {s}: {mp['name']} → {mp['model'].split('-')[1].title()} ({mp['reason']})")
-
 st.markdown(
-    '<div class="pipeline-info"><strong>파이프라인 구성:</strong><br>'
-    + "<br>".join(stage_models) + '</div>',
+    '<div class="pipeline-info"><strong>5-Stage Pipeline (단계별 실행):</strong><br>'
+    'Stage 1: Raw Translation → Sonnet (번역)<br>'
+    'Stage 2: Format Conversion → 규칙 기반 (무료)<br>'
+    'Stage 3: Voice Rewrite → Opus (문체 리라이트)<br>'
+    'Stage 4: Dialogue Polish → Opus (대사 폴리시)<br>'
+    'Stage 5: QA Check → Sonnet (품질 검증)<br>'
+    '<br>💡 각 단계별로 독립 실행 · 결과 저장 · 이어서 진행 가능</div>',
     unsafe_allow_html=True
 )
 
@@ -899,11 +822,7 @@ with st.expander("📋 인물표 파일 예시 보기"):
 # INPUT
 # ═══════════════════════════════════════════════════
 
-st.markdown('<div class="section-header">📥 INPUT — 시나리오 입력</div>', unsafe_allow_html=True)
-
-# For rewrite/QA modes, input is already English
-if selected_mode["id"] in ["rewrite", "qa"]:
-    st.info("💡 이미 영어로 번역된 시나리오를 입력하세요.")
+st.markdown('<div class="section-header">📥 INPUT — 시나리오 입력 (한국어)</div>', unsafe_allow_html=True)
 
 input_method = st.radio(
     "입력 방식:",
@@ -960,10 +879,10 @@ else:
 
 
 # ═══════════════════════════════════════════════════
-# TRANSLATE / EXECUTE
+# STEP-BY-STEP PIPELINE
 # ═══════════════════════════════════════════════════
 
-st.markdown('<div class="section-header">🔄 EXECUTE — 파이프라인 실행</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">🔄 PIPELINE — 단계별 실행</div>', unsafe_allow_html=True)
 
 can_run = bool(api_key and source_text.strip())
 
@@ -972,39 +891,60 @@ if not api_key:
 elif not source_text.strip():
     st.warning("⬆️ 시나리오 텍스트를 입력하세요.")
 
+# ── Initialize session state for each stage ──
+for key in ["stage_1_result", "stage_2_result", "stage_3_result", "stage_4_result", "stage_5_result"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
+
+# Helper: Show stage result with download
+def show_stage_result(stage_num: int, stage_name: str, result_key: str):
+    """Display stage result with download button."""
+    result = st.session_state.get(result_key)
+    if result:
+        with st.expander(f"📄 Stage {stage_num} 결과 — {stage_name}", expanded=False):
+            st.text(result[:5000] + ("..." if len(result) > 5000 else ""))
+        st.download_button(
+            f"💾 Stage {stage_num} 결과 저장 (TXT)",
+            data=result.encode("utf-8"),
+            file_name=f"stage_{stage_num}_{stage_name.lower().replace(' ', '_')}.txt",
+            mime="text/plain",
+            use_container_width=True,
+            key=f"dl_stage_{stage_num}",
+        )
+
+# Helper: Upload previous stage result
+def upload_previous_result(stage_num: int, prev_stage_name: str, result_key: str):
+    """Allow uploading previous stage result to continue pipeline."""
+    prev_result = st.session_state.get(result_key)
+    if prev_result:
+        st.success(f"✅ 이전 단계 결과 있음 ({len(prev_result):,}자) — 자동 연결됩니다.")
+        return prev_result
+    else:
+        st.info(f"💡 이전 단계({prev_stage_name}) 결과가 없으면 파일을 업로드하세요.")
+        prev_file = st.file_uploader(
+            f"Stage {stage_num - 1} 결과 파일 업로드",
+            type=["txt"],
+            key=f"prev_upload_{stage_num}",
+        )
+        if prev_file:
+            text = prev_file.read().decode("utf-8", errors="replace")
+            st.success(f"✅ 파일 로드 완료 — {len(text):,}자")
+            return text
+    return None
+
+
+# ═══════════════════════════════════════════════════
+# STAGE 1: Raw Translation
+# ═══════════════════════════════════════════════════
+st.markdown("---")
+st.markdown("### ① Raw Translation (Sonnet)")
+st.caption("한국어 → 영어 직역. 충실한 번역이 목표.")
+
 if can_run:
-    # Summary
-    summary = [
-        f"**모드**: {mode_choice.split('—')[0].strip()}",
-        f"**지역**: {region_choice.split('—')[0].strip()}",
-        f"**스타일**: {style_choice.split('—')[0].strip()}",
-    ]
-    if char_map:
-        summary.append(f"**인물표**: {len(char_map)}명")
-    if char_tones:
-        summary.append(f"**톤 태그**: {len(char_tones)}명")
-    st.caption(" · ".join(summary))
+    if st.button("▶️ Stage 1 실행", key="btn_stage1", use_container_width=True):
+        client = anthropic.Anthropic(api_key=api_key)
+        region_id = selected_region["id"]
 
-# ── Execute Button ──
-if st.button("🚀 파이프라인 실행", type="primary", disabled=not can_run, use_container_width=True):
-
-    client = anthropic.Anthropic(api_key=api_key)
-    region_id = selected_region["id"]
-    active_stages = selected_mode["stages"]
-    completed_stages = []
-
-    # Stage badges area
-    badge_area = st.empty()
-    badge_area.markdown(render_stage_badges(active_stages, active_stages[0], []), unsafe_allow_html=True)
-
-    current_text = source_text
-    qa_report = None
-
-    # ───────────────────────────────
-    # STAGE 1: Raw Translation
-    # ───────────────────────────────
-    if 1 in active_stages:
-        st.markdown("### Stage 1: Raw Translation")
         system_prompt = build_stage1_prompt(
             region_id=region_id,
             char_map=char_map,
@@ -1012,8 +952,8 @@ if st.button("🚀 파이프라인 실행", type="primary", disabled=not can_run
             custom_instructions=custom_instructions,
         )
         model_id = MODEL_POLICY["stage_1"]["model"]
+        pages = split_into_pages(source_text)
 
-        pages = split_into_pages(current_text)
         progress_bar = st.progress(0)
         status_area = st.empty()
 
@@ -1022,32 +962,46 @@ if st.button("🚀 파이프라인 실행", type="primary", disabled=not can_run
             "Stage 1: Raw Translation", progress_bar, status_area
         )
 
-        if results is None:
-            st.stop()
+        if results is not None:
+            st.session_state["stage_1_result"] = "\n\n".join(results)
+            status_area.markdown('<div class="progress-text">✅ Stage 1 완료!</div>', unsafe_allow_html=True)
+            st.rerun()
 
-        current_text = "\n\n".join(results)
-        completed_stages.append(1)
-        badge_area.markdown(render_stage_badges(active_stages, 2, completed_stages), unsafe_allow_html=True)
-        status_area.markdown('<div class="progress-text">✅ Stage 1 완료</div>', unsafe_allow_html=True)
+show_stage_result(1, "Raw Translation", "stage_1_result")
 
-        with st.expander("📄 Stage 1 결과 — Raw Translation", expanded=False):
-            st.text(current_text[:5000] + ("..." if len(current_text) > 5000 else ""))
 
-    # ───────────────────────────────
-    # STAGE 2: Format Conversion
-    # ───────────────────────────────
-    if 2 in active_stages:
-        st.markdown("### Stage 2: Format Conversion")
-        current_text = apply_format_conversion(current_text, region_id)
-        completed_stages.append(2)
-        badge_area.markdown(render_stage_badges(active_stages, 3, completed_stages), unsafe_allow_html=True)
-        st.markdown('<div class="progress-text">✅ Stage 2 완료 (규칙 기반)</div>', unsafe_allow_html=True)
+# ═══════════════════════════════════════════════════
+# STAGE 2: Format Conversion
+# ═══════════════════════════════════════════════════
+st.markdown("---")
+st.markdown("### ② Format Conversion (규칙 기반)")
+st.caption("S#번호 제거, 한국식 지시어 → 영어 표준 변환. API 호출 없음 (무료).")
 
-    # ───────────────────────────────
-    # STAGE 3: Voice Rewrite
-    # ───────────────────────────────
-    if 3 in active_stages:
-        st.markdown("### Stage 3: Voice Rewrite")
+stage_2_input = st.session_state.get("stage_1_result")
+if stage_2_input:
+    if st.button("▶️ Stage 2 실행", key="btn_stage2", use_container_width=True):
+        region_id = selected_region["id"]
+        st.session_state["stage_2_result"] = apply_format_conversion(stage_2_input, region_id)
+        st.rerun()
+elif st.session_state.get("stage_2_result") is None:
+    st.caption("⏳ Stage 1을 먼저 완료하세요.")
+
+show_stage_result(2, "Format", "stage_2_result")
+
+
+# ═══════════════════════════════════════════════════
+# STAGE 3: Voice Rewrite
+# ═══════════════════════════════════════════════════
+st.markdown("---")
+st.markdown("### ③ Voice Rewrite (Opus)")
+st.caption("번역체 제거, 네이티브 문체로 리라이트. 가장 시간과 비용이 많이 드는 단계.")
+
+stage_3_input = upload_previous_result(3, "Stage 2 Format", "stage_2_result")
+if stage_3_input and api_key:
+    if st.button("▶️ Stage 3 실행", key="btn_stage3", use_container_width=True):
+        client = anthropic.Anthropic(api_key=api_key)
+        region_id = selected_region["id"]
+
         system_prompt = build_stage3_prompt(
             region_id=region_id,
             char_map=char_map,
@@ -1056,8 +1010,8 @@ if st.button("🚀 파이프라인 실행", type="primary", disabled=not can_run
             custom_instructions=custom_instructions,
         )
         model_id = MODEL_POLICY["stage_3"]["model"]
+        pages = split_into_pages(stage_3_input)
 
-        pages = split_into_pages(current_text)
         progress_bar = st.progress(0)
         status_area = st.empty()
 
@@ -1066,22 +1020,29 @@ if st.button("🚀 파이프라인 실행", type="primary", disabled=not can_run
             "Stage 3: Voice Rewrite", progress_bar, status_area
         )
 
-        if results is None:
-            st.stop()
+        if results is not None:
+            st.session_state["stage_3_result"] = "\n\n".join(results)
+            status_area.markdown('<div class="progress-text">✅ Stage 3 완료!</div>', unsafe_allow_html=True)
+            st.rerun()
+elif st.session_state.get("stage_3_result") is None:
+    st.caption("⏳ Stage 2를 먼저 완료하세요.")
 
-        current_text = "\n\n".join(results)
-        completed_stages.append(3)
-        badge_area.markdown(render_stage_badges(active_stages, 4, completed_stages), unsafe_allow_html=True)
-        status_area.markdown('<div class="progress-text">✅ Stage 3 완료</div>', unsafe_allow_html=True)
+show_stage_result(3, "Voice Rewrite", "stage_3_result")
 
-        with st.expander("📄 Stage 3 결과 — Voice Rewrite", expanded=False):
-            st.text(current_text[:5000] + ("..." if len(current_text) > 5000 else ""))
 
-    # ───────────────────────────────
-    # STAGE 4: Dialogue Polish
-    # ───────────────────────────────
-    if 4 in active_stages:
-        st.markdown("### Stage 4: Dialogue Polish")
+# ═══════════════════════════════════════════════════
+# STAGE 4: Dialogue Polish
+# ═══════════════════════════════════════════════════
+st.markdown("---")
+st.markdown("### ④ Dialogue Polish (Opus)")
+st.caption("대사 전문 폴리시. 캐릭터 톤 태그 반영.")
+
+stage_4_input = upload_previous_result(4, "Stage 3 Voice Rewrite", "stage_3_result")
+if stage_4_input and api_key:
+    if st.button("▶️ Stage 4 실행", key="btn_stage4", use_container_width=True):
+        client = anthropic.Anthropic(api_key=api_key)
+        region_id = selected_region["id"]
+
         system_prompt = build_stage4_prompt(
             region_id=region_id,
             char_map=char_map,
@@ -1090,8 +1051,8 @@ if st.button("🚀 파이프라인 실행", type="primary", disabled=not can_run
             custom_instructions=custom_instructions,
         )
         model_id = MODEL_POLICY["stage_4"]["model"]
+        pages = split_into_pages(stage_4_input)
 
-        pages = split_into_pages(current_text)
         progress_bar = st.progress(0)
         status_area = st.empty()
 
@@ -1100,23 +1061,32 @@ if st.button("🚀 파이프라인 실행", type="primary", disabled=not can_run
             "Stage 4: Dialogue Polish", progress_bar, status_area
         )
 
-        if results is None:
-            st.stop()
+        if results is not None:
+            st.session_state["stage_4_result"] = "\n\n".join(results)
+            status_area.markdown('<div class="progress-text">✅ Stage 4 완료!</div>', unsafe_allow_html=True)
+            st.rerun()
+elif st.session_state.get("stage_4_result") is None:
+    st.caption("⏳ Stage 3를 먼저 완료하세요.")
 
-        current_text = "\n\n".join(results)
-        completed_stages.append(4)
-        badge_area.markdown(render_stage_badges(active_stages, 5, completed_stages), unsafe_allow_html=True)
-        status_area.markdown('<div class="progress-text">✅ Stage 4 완료</div>', unsafe_allow_html=True)
+show_stage_result(4, "Dialogue Polish", "stage_4_result")
 
-    # ───────────────────────────────
-    # STAGE 5: QA Check
-    # ───────────────────────────────
-    if 5 in active_stages:
-        st.markdown("### Stage 5: QA Check")
+
+# ═══════════════════════════════════════════════════
+# STAGE 5: QA Check
+# ═══════════════════════════════════════════════════
+st.markdown("---")
+st.markdown("### ⑤ QA Check (Sonnet)")
+st.caption("최종 품질 검증. 포맷/일관성/언어/스토리 체크리스트.")
+
+stage_5_input = upload_previous_result(5, "Stage 4 Dialogue Polish", "stage_4_result")
+if stage_5_input and api_key:
+    if st.button("▶️ Stage 5 실행", key="btn_stage5", use_container_width=True):
+        client = anthropic.Anthropic(api_key=api_key)
+        region_id = selected_region["id"]
+
         system_prompt = build_stage5_prompt(region_id=region_id)
         model_id = MODEL_POLICY["stage_5"]["model"]
 
-        # QA runs on full text (not paged)
         status_area = st.empty()
         status_area.markdown(
             '<div class="progress-text">🔍 QA 검증 중...</div>',
@@ -1124,95 +1094,100 @@ if st.button("🚀 파이프라인 실행", type="primary", disabled=not can_run
         )
 
         try:
-            # For very long texts, send last portion for QA
-            qa_input = current_text
+            qa_input = stage_5_input
             if len(qa_input) > 30000:
-                qa_input = current_text[:15000] + "\n\n[...중간 생략...]\n\n" + current_text[-15000:]
+                qa_input = stage_5_input[:15000] + "\n\n[...중간 생략...]\n\n" + stage_5_input[-15000:]
 
             qa_report = call_api(
                 client, qa_input, system_prompt,
                 model_id, max_tokens=4000
             )
+            st.session_state["stage_5_result"] = qa_report
+            status_area.markdown('<div class="progress-text">✅ Stage 5 완료!</div>', unsafe_allow_html=True)
+            st.rerun()
         except Exception as e:
             st.error(f"❌ QA 오류: {e}")
+elif st.session_state.get("stage_5_result") is None:
+    st.caption("⏳ Stage 4를 먼저 완료하세요.")
 
-        completed_stages.append(5)
-        badge_area.markdown(render_stage_badges(active_stages, 0, completed_stages), unsafe_allow_html=True)
-        status_area.markdown('<div class="progress-text">✅ Stage 5 완료</div>', unsafe_allow_html=True)
-
-    # ═══════════════════════════════════════
-    # SAVE RESULTS
-    # ═══════════════════════════════════════
-    st.session_state["translation_result"] = current_text
-    if qa_report:
-        st.session_state["qa_report"] = qa_report
-    st.session_state["completed_stages"] = completed_stages
+# Show QA report
+if st.session_state.get("stage_5_result"):
+    st.markdown("**🔍 QA Report**")
+    st.markdown(f'<div class="qa-box">{st.session_state["stage_5_result"]}</div>', unsafe_allow_html=True)
+    st.download_button(
+        "💾 QA Report 저장 (TXT)",
+        data=st.session_state["stage_5_result"].encode("utf-8"),
+        file_name="qa_report.txt",
+        mime="text/plain",
+        use_container_width=True,
+        key="dl_qa",
+    )
 
 
 # ═══════════════════════════════════════════════════
-# OUTPUT
+# FINAL OUTPUT — DOCX
 # ═══════════════════════════════════════════════════
 
-# Show last error if any
-if "last_error" in st.session_state:
-    st.error(st.session_state["last_error"])
+# Determine the latest completed result for DOCX
+final_result = (
+    st.session_state.get("stage_4_result")
+    or st.session_state.get("stage_3_result")
+    or st.session_state.get("stage_2_result")
+    or st.session_state.get("stage_1_result")
+)
 
-if "translation_result" in st.session_state:
-    st.markdown('<div class="section-header">📤 OUTPUT — 최종 결과</div>', unsafe_allow_html=True)
+if final_result:
+    st.markdown("---")
+    st.markdown('<div class="section-header">📤 FINAL OUTPUT — 최종 다운로드</div>', unsafe_allow_html=True)
 
-    result = st.session_state["translation_result"]
+    # Show which stage this is from
+    if st.session_state.get("stage_4_result"):
+        st.caption("✅ Stage 4 (Dialogue Polish) 결과 기준")
+    elif st.session_state.get("stage_3_result"):
+        st.caption("⚠️ Stage 3 (Voice Rewrite) 결과 기준 — Stage 4 미완료")
+    elif st.session_state.get("stage_2_result"):
+        st.caption("⚠️ Stage 2 (Format) 결과 기준 — Stage 3~4 미완료")
+    else:
+        st.caption("⚠️ Stage 1 (Raw Translation) 결과 기준 — 추가 폴리시 권장")
 
-    # Show completed stages
-    if "completed_stages" in st.session_state:
-        completed = st.session_state["completed_stages"]
-        stage_labels = {1: "Raw Translation", 2: "Format", 3: "Voice Rewrite", 4: "Dialogue Polish", 5: "QA"}
-        done_list = " → ".join([f"✅ {stage_labels[s]}" for s in completed])
-        st.caption(f"완료된 단계: {done_list}")
-
-    # Main result
-    st.markdown(f'<div class="result-box">{result}</div>', unsafe_allow_html=True)
-
-    # QA Report
-    if "qa_report" in st.session_state:
-        st.markdown("")
-        st.markdown("**🔍 QA Report**")
-        st.markdown(f'<div class="qa-box">{st.session_state["qa_report"]}</div>', unsafe_allow_html=True)
-
-    # Download buttons
-    st.markdown("")
     col1, col2 = st.columns(2)
 
     with col1:
         st.download_button(
             "📥 TXT 다운로드",
-            data=result.encode("utf-8"),
+            data=final_result.encode("utf-8"),
             file_name="screenplay_translated.txt",
             mime="text/plain",
             use_container_width=True,
+            key="dl_final_txt",
         )
 
     with col2:
         try:
-            docx_bytes = generate_docx(result)
+            docx_bytes = generate_docx(final_result)
             st.download_button(
                 "📥 DOCX 다운로드 (할리우드 포맷)",
                 data=docx_bytes,
                 file_name="screenplay_translated.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True,
+                key="dl_final_docx",
             )
-        except ImportError:
-            st.info("DOCX 출력을 위해 python-docx가 필요합니다.")
+        except Exception as e:
+            st.error(f"DOCX 생성 오류: {e}")
 
-    # QA Report download
-    if "qa_report" in st.session_state:
-        st.download_button(
-            "📥 QA Report 다운로드",
-            data=st.session_state["qa_report"].encode("utf-8"),
-            file_name="qa_report.txt",
-            mime="text/plain",
-            use_container_width=True,
-        )
+    # Reset button
+    st.markdown("")
+    if st.button("🗑️ 전체 초기화 (새 프로젝트)", use_container_width=True):
+        for key in ["stage_1_result", "stage_2_result", "stage_3_result",
+                     "stage_4_result", "stage_5_result", "last_error"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
+
+# Show last error if any
+if "last_error" in st.session_state:
+    st.error(st.session_state["last_error"])
 
 
 # ── Footer ──

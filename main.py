@@ -457,17 +457,20 @@ def apply_format_conversion(text: str, region_id: str) -> str:
 def call_api(client, text: str, system_prompt: str, model_id: str,
              max_tokens: int = 8000, page_info: str = "") -> str:
     """Call Claude API with streaming to prevent timeout."""
-    context = f"\n\n[Context: {page_info}]" if page_info else ""
+    # 페이지 정보는 시스템 프롬프트에 추가 (본문에 섞이면 출력에 포함됨)
+    full_system = system_prompt
+    if page_info:
+        full_system += f"\n\n[Internal context for consistency: {page_info}. Do NOT include this note in your output.]"
 
     collected = []
     with client.messages.stream(
         model=model_id,
         max_tokens=max_tokens,
-        system=system_prompt,
+        system=full_system,
         messages=[
             {
                 "role": "user",
-                "content": f"{text}{context}"
+                "content": text
             }
         ]
     ) as stream:

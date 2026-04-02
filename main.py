@@ -480,10 +480,11 @@ def apply_format_conversion(text: str, region_id: str) -> str:
 
 def call_api(client, text: str, system_prompt: str, model_id: str,
              max_tokens: int = 8000, page_info: str = "") -> str:
-    """Call Claude API with given prompt and text."""
+    """Call Claude API with streaming to prevent timeout."""
     context = f"\n\n[Context: {page_info}]" if page_info else ""
 
-    message = client.messages.create(
+    collected = []
+    with client.messages.stream(
         model=model_id,
         max_tokens=max_tokens,
         system=system_prompt,
@@ -493,8 +494,11 @@ def call_api(client, text: str, system_prompt: str, model_id: str,
                 "content": f"{text}{context}"
             }
         ]
-    )
-    return message.content[0].text
+    ) as stream:
+        for text_chunk in stream.text_stream:
+            collected.append(text_chunk)
+
+    return "".join(collected)
 
 
 def run_stage_on_pages(client, pages: list, system_prompt: str,
@@ -507,7 +511,7 @@ def run_stage_on_pages(client, pages: list, system_prompt: str,
     for idx, page in enumerate(pages):
         page_num = idx + 1
         status_area.markdown(
-            f'<div class="progress-text">🔄 {stage_name} — 페이지 {page_num}/{total} 처리 중...</div>',
+            f'<div class="progress-text">🔄 {stage_name} — 페이지 {page_num}/{total} 처리 중... (모델: {model_id})</div>',
             unsafe_allow_html=True
         )
 
@@ -518,10 +522,14 @@ def run_stage_on_pages(client, pages: list, system_prompt: str,
             )
             results.append(result)
         except anthropic.APIError as e:
-            st.error(f"❌ API 오류 ({stage_name}, 페이지 {page_num}): {e}")
+            error_msg = f"❌ API 오류 ({stage_name}, 페이지 {page_num}): {e}"
+            st.error(error_msg)
+            st.session_state["last_error"] = error_msg
             return None
         except Exception as e:
-            st.error(f"❌ 오류 ({stage_name}, 페이지 {page_num}): {e}")
+            error_msg = f"❌ 오류 ({stage_name}, 페이지 {page_num}): {type(e).__name__}: {e}"
+            st.error(error_msg)
+            st.session_state["last_error"] = error_msg
             return None
 
         progress_bar.progress(page_num / total)
@@ -543,12 +551,12 @@ def generate_docx(text: str) -> bytes:
 
     # ── Page Setup ──
     section = doc.sections[0]
-    section.page_width = Cm(21.59)   # US Letter
-    section.page_height = Cm(27.94)
-    section.left_margin = Cm(3.81)   # 1.5 inch left (screenplay standard)
-    section.right_margin = Cm(2.54)  # 1 inch right
-    section.top_margin = Cm(2.54)
-    section.bottom_margin = Cm(2.54)
+    section.page_width = Cm(21.0)    # A4
+    section.page_height = Cm(29.7)   # A4
+    section.left_margin = Cm(2.0)
+    section.right_margin = Cm(2.0)
+    section.top_margin = Cm(2.0)
+    section.bottom_margin = Cm(2.0)
 
     # ── Styles ──
     style_normal = doc.styles['Normal']
@@ -1144,6 +1152,10 @@ if st.button("🚀 파이프라인 실행", type="primary", disabled=not can_run
 # ═══════════════════════════════════════════════════
 # OUTPUT
 # ═══════════════════════════════════════════════════
+
+# Show last error if any
+if "last_error" in st.session_state:
+    st.error(st.session_state["last_error"])
 
 if "translation_result" in st.session_state:
     st.markdown('<div class="section-header">📤 OUTPUT — 최종 결과</div>', unsafe_allow_html=True)

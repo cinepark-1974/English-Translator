@@ -1,5 +1,5 @@
 """
-BLUE JEANS PICTURES — English-Translator v2.0
+BLUE JEANS PICTURES — English-Translator
 prompt.py — Translation Pipeline Prompts & Rule Packs
 
 5-Stage Pipeline:
@@ -11,7 +11,29 @@ prompt.py — Translation Pipeline Prompts & Rule Packs
 
 Target Regions: US / UK / Indonesia
 Character Tone Tags: formal / casual / street
+
+─────────────────────────────────────────────
+CHANGELOG (최신이 위)
+─────────────────────────────────────────────
+v2.1 (2026-06-04)
+  - 기능 추가: 프로젝트 세션 백업 (JSON 중간 저장/불러오기)
+    단계 중단 시 Stage 1~5 번역 결과를 JSON으로 저장하고
+    다음 작업 때 복원해 이어서 진행 가능.
+  - 신설: ENGINE_VERSION / ENGINE_BUILD_DATE 상수
+    (기존에는 main.py의 VERSION 문자열만 존재)
+
+v2.0
+  - 5-Stage Native Polish Pipeline 최초 구성
+  - Region Profiles (US/UK/Indonesia), Style Presets 8종,
+    Character Tone Tags (formal/casual/street)
 """
+
+# ═══════════════════════════════════════════════════
+# ENGINE VERSION (세만틱 버저닝)
+# ═══════════════════════════════════════════════════
+
+ENGINE_VERSION = "2.1"
+ENGINE_BUILD_DATE = "2026-06-04"
 
 # ═══════════════════════════════════════════════════
 # REGION PROFILES

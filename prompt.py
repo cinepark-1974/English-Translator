@@ -729,22 +729,22 @@ def _build_tone_section(char_tones: dict) -> str:
 MODEL_POLICY = {
     "stage_1": {
         "name": "Raw Translation",
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-5",
         "reason": "정확한 번역 — 속도+품질 균형",
     },
     "stage_3": {
         "name": "Voice Rewrite",
-        "model": "claude-opus-4-20250514",
+        "model": "claude-opus-4.8",
         "reason": "네이티브 문체 리라이팅 — 최고 품질 필수",
     },
     "stage_4": {
         "name": "Dialogue Polish",
-        "model": "claude-opus-4-20250514",
+        "model": "claude-opus-4.8",
         "reason": "대사 현지화 — 문화적 뉘앙스 필수",
     },
     "stage_5": {
         "name": "QA Check",
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-5",
         "reason": "체크리스트 기반 검증 — Sonnet으로 충분",
     },
 }

@@ -734,12 +734,12 @@ MODEL_POLICY = {
     },
     "stage_3": {
         "name": "Voice Rewrite",
-        "model": "claude-opus-4.8",
+        "model": "claude-opus-4-6",
         "reason": "네이티브 문체 리라이팅 — 최고 품질 필수",
     },
     "stage_4": {
         "name": "Dialogue Polish",
-        "model": "claude-opus-4.8",
+        "model": "claude-opus-4-6",
         "reason": "대사 현지화 — 문화적 뉘앙스 필수",
     },
     "stage_5": {

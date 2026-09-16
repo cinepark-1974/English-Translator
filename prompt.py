@@ -15,6 +15,19 @@ Character Tone Tags: formal / casual / street
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.2 (2026-09-16)
+  - 기능 추가: 로컬라이징 대조표(XLSX) 통합
+    인물표 CSV/TXT 외에 다중 시트 엑셀 대조표를 읽어
+    ① 주요 인물 ② 조·단역 ③ 지명·기관명·통화·법률 표기까지
+    한 번에 매핑으로 반영.
+  - 신설 상수: LOCALIZATION_RULES
+    (한국 고유 요소 잔존 금지 — 지명/기관/법령/통화/주소/사건번호)
+  - 신설 함수: build_localization_section()
+  - build_stage1/3/4/5_prompt()에 loc_map 인자 추가
+    (Stage 1~4 매핑 강제 주입, Stage 5 QA 대조 검증)
+  - STAGE_1 RULES 8~10 추가 (룰 번호 1~7 기존 유지)
+  - STAGE_5 체크리스트에 LOCALIZATION 섹션 추가
+
 v2.1 (2026-06-04)
   - 기능 추가: 프로젝트 세션 백업 (JSON 중간 저장/불러오기)
     단계 중단 시 Stage 1~5 번역 결과를 JSON으로 저장하고
@@ -32,8 +45,8 @@ v2.0
 # ENGINE VERSION (세만틱 버저닝)
 # ═══════════════════════════════════════════════════
 
-ENGINE_VERSION = "2.1"
-ENGINE_BUILD_DATE = "2026-06-04"
+ENGINE_VERSION = "2.2"
+ENGINE_BUILD_DATE = "2026-09-16"
 
 # ═══════════════════════════════════════════════════
 # REGION PROFILES
@@ -285,6 +298,46 @@ CHARACTER_TONE_TAGS = {
 # STAGE 1: RAW TRANSLATION (Sonnet)
 # ═══════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════
+# ★ v2.2 — LOCALIZATION RULES
+# 한국 고유 요소 잔존 금지 (지명/기관/법령/통화/주소/사건번호)
+# ═══════════════════════════════════════════════════
+
+LOCALIZATION_RULES = """
+## LOCALIZATION — NON-NEGOTIABLE
+This screenplay is being RELOCATED to the target region, not subtitled.
+Every Korea-specific element below must be converted. Leaving one untranslated
+invalidates the entire draft.
+
+### MUST CONVERT
+1. PLACE NAMES — cities, districts, neighborhoods, streets, landmarks, highways.
+   (e.g. 노원구 → a real district of the target city, not "Nowon-gu")
+2. GOVERNMENT & INSTITUTIONS — tax authority, police/prosecution bodies, courts,
+   audit agencies, ministries, city halls, district offices, broadcasters.
+   Use the ACTUAL equivalent agency of the target region, with its real name and hierarchy.
+3. LEGAL SYSTEM — statute names, charge names, court levels, case numbers,
+   warrant procedure, sentencing terms. Match the target jurisdiction's real practice.
+4. CURRENCY & UNITS — convert amounts to target currency at a dramatically sensible
+   round figure. Never write "won" or "₩". Never leave a won figure with a dollar sign.
+5. ADDRESSES & PHONE FORMATS — target-region format.
+6. BUSINESS & BRAND NAMES — Korean chaebol/brands → plausible target-region equivalents.
+7. MEDIA & TITLES — news programs, newspapers, job titles, ranks, honorific forms of address.
+8. FOOD, HOLIDAYS, CUSTOMS — adapt so a native reader never senses a translated Korean original.
+
+### CONSISTENCY LAW
+- One Korean term = exactly ONE English term for the entire script.
+- If a term appears in the LOCALIZATION MAP, the map wins over your own judgment.
+- If the same institution appears under several Korean phrasings, they all collapse
+  into the single mapped English name.
+
+### FORBIDDEN
+- Romanized Korean proper nouns (Sejong, Gangnam, Nowon-gu, Myung, Kang, -si, -gu, -dong)
+- Mixed currency artifacts ("$100,000,000 WON")
+- Korean case-number formats (2026고합1234)
+- "Korean-style" explanations in parentheses
+- Two different English names for one character or institution"""
+
+
 STAGE_1_RAW_TRANSLATION = """You are a Korean-to-English screenplay translator.
 Your job is ACCURATE TRANSLATION — not rewriting.
 
@@ -300,6 +353,15 @@ Translate the Korean screenplay into English with maximum fidelity to meaning, s
 6. Output ONLY the translated text. No commentary, no notes, no page numbers.
 7. If a Korean expression has no direct English equivalent, choose the closest NATURAL English phrase
    that preserves the emotion and intent. Do NOT transliterate.
+8. LOCALIZATION IS MANDATORY — this is not a subtitle translation. Korean place names,
+   government bodies, courts, banks, laws, currency, address formats and case numbers must be
+   replaced with the target-region equivalents supplied in the LOCALIZATION MAP.
+   A Korean proper noun left untouched is a defect, not a stylistic choice.
+9. Apply the LOCALIZATION MAP to EVERY occurrence — scene headings, action lines, dialogue,
+   parentheticals, on-screen text, SUPER/TITLE cards, V.O. news copy, signage and props.
+   Minor/background characters carry the same obligation as leads.
+10. Anything Korean-specific NOT in the map still must be localized by inference to the same
+   region, consistently across the whole script. Never leave a romanized Korean placeholder.
 
 ## CHARACTER NAME RULES
 - Apply the character map provided (Korean → English names).
@@ -528,6 +590,15 @@ Perform a final check on this translated and polished screenplay.
 - [ ] No unnatural dialogue patterns
 - [ ] Honorifics consistent with region profile
 
+### LOCALIZATION (v2.2)
+- [ ] No romanized Korean place names (Sejong, Nowon-gu, Gangnam, -si, -gu, -dong)
+- [ ] No Korean institutions left untranslated (국세청, 감사원, 세무서, 지방법원)
+- [ ] No Korean currency artifacts ("won", "₩", "$...WON")
+- [ ] No Korean case-number formats (2026고합XXXX)
+- [ ] Every entry of the LOCALIZATION MAP is actually applied in the text
+- [ ] Minor/background characters also follow the map (not just leads)
+- [ ] One term = one English equivalent, script-wide
+
 ### STORY
 - [ ] No scenes missing compared to original structure
 - [ ] No accidental plot changes
@@ -551,6 +622,10 @@ CONSISTENCY ISSUES:
 LANGUAGE ISSUES:
 - [list any language problems with specific line references, or "None found"]
 
+LOCALIZATION ISSUES:
+- [list every Korea-specific element still present, quoting it, or "None found"]
+- [list every LOCALIZATION MAP entry that was NOT applied, or "None found"]
+
 STORY ISSUES:
 - [list any story problems, or "None found"]
 
@@ -573,7 +648,8 @@ def build_stage1_prompt(
     region_id: str,
     char_map: dict,
     style_prompt: str,
-    custom_instructions: str = ""
+    custom_instructions: str = "",
+    loc_map: dict = None
 ) -> str:
     """Build Stage 1 (Raw Translation) system prompt."""
     region = _get_region(region_id)
@@ -582,10 +658,18 @@ def build_stage1_prompt(
     # Region language rules
     parts.append(region["language_rules"])
 
+    # ★ v2.2 — Localization rules (always on)
+    parts.append(LOCALIZATION_RULES)
+
     # Character map
     if char_map:
         char_section = _build_char_map_section(char_map)
         parts.append(char_section)
+
+    # ★ v2.2 — Localization map (extras / places / corrections)
+    loc_section = build_localization_section(loc_map)
+    if loc_section:
+        parts.append(loc_section)
 
     # Style
     if style_prompt:
@@ -603,7 +687,8 @@ def build_stage3_prompt(
     char_map: dict,
     char_tones: dict,
     style_prompt: str,
-    custom_instructions: str = ""
+    custom_instructions: str = "",
+    loc_map: dict = None
 ) -> str:
     """Build Stage 3 (Voice Rewrite) system prompt.
     
@@ -617,9 +702,17 @@ def build_stage3_prompt(
     parts.append(region["language_rules"])
     parts.append(region["screenplay_format"])
 
+    # ★ v2.2 — Localization rules
+    parts.append(LOCALIZATION_RULES)
+
     # Character map
     if char_map:
         parts.append(_build_char_map_section(char_map))
+
+    # ★ v2.2 — Localization map
+    loc_section = build_localization_section(loc_map)
+    if loc_section:
+        parts.append(loc_section)
 
     # Character tone tags
     if char_tones:
@@ -641,7 +734,8 @@ def build_stage4_prompt(
     char_map: dict,
     char_tones: dict,
     style_prompt: str,
-    custom_instructions: str = ""
+    custom_instructions: str = "",
+    loc_map: dict = None
 ) -> str:
     """Build Stage 4 (Dialogue Polish) system prompt."""
     region = _get_region(region_id)
@@ -650,9 +744,18 @@ def build_stage4_prompt(
     # Region rules
     parts.append(region["language_rules"])
 
+    # ★ v2.2 — Localization rules
+    parts.append(LOCALIZATION_RULES)
+
     # Character map + tones
     if char_map:
         parts.append(_build_char_map_section(char_map))
+
+    # ★ v2.2 — Localization map
+    loc_section = build_localization_section(loc_map)
+    if loc_section:
+        parts.append(loc_section)
+
     if char_tones:
         parts.append(_build_tone_section(char_tones))
 
@@ -667,12 +770,20 @@ def build_stage4_prompt(
     return "\n".join(parts)
 
 
-def build_stage5_prompt(region_id: str) -> str:
-    """Build Stage 5 (QA Check) system prompt."""
+def build_stage5_prompt(region_id: str, char_map: dict = None, loc_map: dict = None) -> str:
+    """Build Stage 5 (QA Check) system prompt. (v2.2 — loc_map 대조 검증)"""
     region = _get_region(region_id)
     parts = [STAGE_5_QA_CHECK]
     parts.append(region["language_rules"])
     parts.append(region["screenplay_format"])
+
+    # ★ v2.2 — QA가 대조할 매핑 원본을 함께 전달
+    if char_map:
+        parts.append(_build_char_map_section(char_map))
+    loc_section = build_localization_section(loc_map)
+    if loc_section:
+        parts.append(loc_section)
+
     return "\n".join(parts)
 
 
@@ -702,6 +813,68 @@ Adapt Korean honorific usage (e.g., "수현아", "서연이 언니") into natura
 Any name NOT listed: romanize using Revised Romanization."""
 
 
+def build_localization_section(loc_map: dict) -> str:
+    """Build the LOCALIZATION MAP section for prompts. (v2.2)
+
+    loc_map structure (all keys optional):
+      {
+        "extras":      {korean_term: english_term},   # 조·단역
+        "places":      {korean_term: english_term},   # 지명·기관명·통화·법률
+        "corrections": {wrong_english: correct_english},  # v1 오표기 → v2 확정
+      }
+
+    NOTE: 주요 등장인물(characters)은 _build_char_map_section()이 담당한다.
+          중복 주입을 피하기 위해 이 함수는 characters 키를 출력하지 않는다.
+    """
+    if not loc_map:
+        return ""
+
+    blocks = []
+
+    extras = loc_map.get("extras") or {}
+    if extras:
+        lines = "\n".join([f"  · {ko} → {en}" for ko, en in extras.items()])
+        blocks.append(
+            "### MINOR & BACKGROUND CHARACTERS — MANDATORY\n"
+            "These carry the SAME obligation as lead characters. No exceptions.\n"
+            f"{lines}"
+        )
+
+    places = loc_map.get("places") or {}
+    if places:
+        lines = "\n".join([f"  · {ko} → {en}" for ko, en in places.items()])
+        blocks.append(
+            "### PLACES / INSTITUTIONS / LEGAL / CURRENCY — MANDATORY\n"
+            "Replace on EVERY occurrence: scene headings, action, dialogue, on-screen text.\n"
+            f"{lines}"
+        )
+
+    corrections = loc_map.get("corrections") or {}
+    if corrections:
+        lines = "\n".join([f"  · \"{bad}\" → \"{good}\"" for bad, good in corrections.items()])
+        blocks.append(
+            "### KNOWN MISTRANSLATIONS — REPLACE ON SIGHT\n"
+            "If any of the left-hand forms appear in the text you receive, they are errors\n"
+            "from an earlier draft. Replace them with the right-hand form everywhere.\n"
+            f"{lines}"
+        )
+
+    if not blocks:
+        return ""
+
+    body = "\n\n".join(blocks)
+    return f"""
+## LOCALIZATION MAP — MANDATORY
+This map overrides your own judgment. Every entry must appear in the output
+in its mapped English form, and its Korean/incorrect form must appear nowhere.
+
+{body}
+
+### SELF-CHECK BEFORE OUTPUT
+Scan your own draft once. If any Korean proper noun, won amount, Korean court or
+agency name, or any left-hand term above survived, fix it before returning."""
+
+
 def _build_tone_section(char_tones: dict) -> str:
     """Build character tone tag section for prompts."""
     lines = []
@@ -729,22 +902,22 @@ def _build_tone_section(char_tones: dict) -> str:
 MODEL_POLICY = {
     "stage_1": {
         "name": "Raw Translation",
-        "model": "claude-sonnet-5",
+        "model": "claude-sonnet-4-20250514",
         "reason": "정확한 번역 — 속도+품질 균형",
     },
     "stage_3": {
         "name": "Voice Rewrite",
-        "model": "claude-opus-4-6",
+        "model": "claude-opus-4-20250514",
         "reason": "네이티브 문체 리라이팅 — 최고 품질 필수",
     },
     "stage_4": {
         "name": "Dialogue Polish",
-        "model": "claude-opus-4-6",
+        "model": "claude-opus-4-20250514",
         "reason": "대사 현지화 — 문화적 뉘앙스 필수",
     },
     "stage_5": {
         "name": "QA Check",
-        "model": "claude-sonnet-5",
+        "model": "claude-sonnet-4-20250514",
         "reason": "체크리스트 기반 검증 — Sonnet으로 충분",
     },
 }

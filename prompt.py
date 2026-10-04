@@ -15,6 +15,18 @@ Character Tone Tags: formal / casual / street
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.3.0 (2026-10-04)
+  - 기능 추가: 대조표 '핵심 대사 고정 번역' 시트 → LOCKED LINES 섹션
+    (Stage 1·3·4 원문 그대로 사용 강제, Stage 5 검증)
+  - 기능 추가: 대조표 '말투 지침' 시트 → CHARACTER VOICE NOTES 섹션 (Stage 3·4)
+    신설 함수: build_voice_notes_section()
+  - STAGE_1 RULES 11~12 추가 (룰 1~10 기존 유지)
+    11 COMPLETENESS — 전 씬·전 대사 번역, 요약·생략·조기 종료 금지, S# 번호 유지
+    12 CREDITS — 제작사 표기 BLUE JEANS PICTURES 고정 (Blue Gene 오역 방지)
+  - STAGE_3 / STAGE_4 OUTPUT 강화 — 씬 헤딩 전수 유지, LOCKED LINES 보존
+  - STAGE_5 — 원고 전체 검토 전제, 기대 씬 수 대비 누락 보고, 고정 대사·제작사 체크
+  - 인물 매핑 섹션 — 약칭·친족어(아내, 둘째 등)는 해당 인물을 가리킬 때만 적용
+
 v2.2.3 (2026-10-04)
   - 버그 수정: Stage 5 QA 리포트가 빈 내용으로 저장되던 문제
     · 원인: Claude 5.5 계열은 사고(adaptive thinking)가 기본 ON이며
@@ -65,7 +77,7 @@ v2.0
 # ENGINE VERSION (세만틱 버저닝)
 # ═══════════════════════════════════════════════════
 
-ENGINE_VERSION = "2.2.3"
+ENGINE_VERSION = "2.3.0"
 ENGINE_BUILD_DATE = "2026-10-04"
 
 # ═══════════════════════════════════════════════════
@@ -382,6 +394,12 @@ Translate the Korean screenplay into English with maximum fidelity to meaning, s
    Minor/background characters carry the same obligation as leads.
 10. Anything Korean-specific NOT in the map still must be localized by inference to the same
    region, consistently across the whole script. Never leave a romanized Korean placeholder.
+11. COMPLETENESS IS MANDATORY — translate EVERY scene and EVERY line of the text you receive,
+   from the first character to the last. Never summarize, condense, skip or stop early.
+   Keep every scene number exactly as written (S#1, S#2 ...) so scene counts can be verified.
+   If the input ends mid-scene, translate up to that exact point and stop there.
+12. CREDITS — the production company is always written "BLUE JEANS PICTURES"
+   (블루진픽처스 / 블루진 픽처스 / 블루진스). Never "Blue Gene", "Bluejean" or any other spelling.
 
 ## CHARACTER NAME RULES
 - Apply the character map provided (Korean → English names).
@@ -514,6 +532,9 @@ White space = pacing = reading speed = screen time.
 
 ## OUTPUT
 Return the COMPLETE rewritten screenplay. Do not skip scenes.
+Every scene heading in the input must appear in the output, in the same order.
+Never summarize or stop early — rewrite through to the last line you received.
+Lines listed under LOCKED LINES must stay word-for-word.
 Do not add commentary. Output ONLY the screenplay."""
 
 
@@ -578,6 +599,9 @@ Per the region profile, adapt:
 ## OUTPUT
 Return the COMPLETE screenplay with polished dialogue.
 Action lines and scene headings must be returned UNCHANGED.
+Every scene heading in the input must appear in the output, in the same order.
+Never summarize or stop early — return through to the last line you received.
+Lines listed under LOCKED LINES must stay word-for-word — do not polish them.
 Do not add commentary. Output ONLY the screenplay."""
 
 
@@ -587,6 +611,9 @@ Do not add commentary. Output ONLY the screenplay."""
 
 STAGE_5_QA_CHECK = """You are a screenplay quality assurance specialist.
 Perform a final check on this translated and polished screenplay.
+You receive the COMPLETE screenplay — nothing has been omitted by the pipeline.
+If an expected scene count is given, count the scene headings and report any shortfall
+under STORY ISSUES as "MISSING SCENES".
 
 ## CHECK LIST
 
@@ -618,6 +645,8 @@ Perform a final check on this translated and polished screenplay.
 - [ ] Every entry of the LOCALIZATION MAP is actually applied in the text
 - [ ] Minor/background characters also follow the map (not just leads)
 - [ ] One term = one English equivalent, script-wide
+- [ ] Every LOCKED LINE appears word-for-word (v2.3.0)
+- [ ] Production company credited as "BLUE JEANS PICTURES" (v2.3.0)
 
 ### STORY
 - [ ] No scenes missing compared to original structure
@@ -738,6 +767,11 @@ def build_stage3_prompt(
     if char_tones:
         parts.append(_build_tone_section(char_tones))
 
+    # ★ v2.3.0 — writer's voice notes
+    voice_section = build_voice_notes_section(loc_map)
+    if voice_section:
+        parts.append(voice_section)
+
     # Style
     if style_prompt:
         parts.append(f"\n## GENRE STYLE\n{style_prompt}")
@@ -778,6 +812,11 @@ def build_stage4_prompt(
 
     if char_tones:
         parts.append(_build_tone_section(char_tones))
+
+    # ★ v2.3.0 — writer's voice notes
+    voice_section = build_voice_notes_section(loc_map)
+    if voice_section:
+        parts.append(voice_section)
 
     # Style
     if style_prompt:
@@ -829,6 +868,8 @@ Replace ALL Korean character names with their English equivalents:
 {char_lines}
 
 Apply to: dialogue cues, action lines, parentheticals, all mentions.
+Short forms and kinship words in this list (e.g. 아내, 둘째, 큰아들) map to that character
+ONLY when the context refers to that specific person — otherwise translate them normally.
 Adapt Korean honorific usage (e.g., "수현아", "서연이 언니") into natural English per region rules.
 Any name NOT listed: romanize using Revised Romanization."""
 
@@ -841,6 +882,8 @@ def build_localization_section(loc_map: dict) -> str:
         "extras":      {korean_term: english_term},   # 조·단역
         "places":      {korean_term: english_term},   # 지명·기관명·통화·법률
         "corrections": {wrong_english: correct_english},  # v1 오표기 → v2 확정
+        "fixed_lines": [{"scene","speaker","ko","en"}],  # ★ v2.3.0 고정 대사
+        "voice_notes": {...},  # ★ v2.3.0 — build_voice_notes_section()이 담당
       }
 
     NOTE: 주요 등장인물(characters)은 _build_char_map_section()이 담당한다.
@@ -869,6 +912,24 @@ def build_localization_section(loc_map: dict) -> str:
             f"{lines}"
         )
 
+    # ★ v2.3.0 — 핵심 대사 고정 번역
+    fixed = loc_map.get("fixed_lines") or []
+    if fixed:
+        lines = []
+        for f in fixed:
+            tag = " · ".join(x for x in [
+                f"S#{f.get('scene')}" if f.get("scene") else "",
+                f.get("speaker") or "",
+            ] if x)
+            lines.append(f"  · [{tag}] {f.get('ko')}\n    → {f.get('en')}")
+        blocks.append(
+            "### LOCKED LINES — USE VERBATIM\n"
+            "When the Korean line on the left appears, the English on the right is the ONLY\n"
+            "acceptable rendering. Copy it word-for-word. Later passes must not polish it.\n"
+            "A '/' inside a line marks a line break or a separate beat.\n"
+            + "\n".join(lines)
+        )
+
     corrections = loc_map.get("corrections") or {}
     if corrections:
         lines = "\n".join([f"  · \"{bad}\" → \"{good}\"" for bad, good in corrections.items()])
@@ -893,6 +954,19 @@ in its mapped English form, and its Korean/incorrect form must appear nowhere.
 ### SELF-CHECK BEFORE OUTPUT
 Scan your own draft once. If any Korean proper noun, won amount, Korean court or
 agency name, or any left-hand term above survived, fix it before returning."""
+
+
+def build_voice_notes_section(loc_map: dict) -> str:
+    """★ v2.3.0 — 대조표 '말투 지침' 시트를 Stage 3·4 프롬프트로 만든다."""
+    notes = (loc_map or {}).get("voice_notes") or {}
+    if not notes:
+        return ""
+    lines = "\n".join(f"  · {who}: {note}" for who, note in notes.items())
+    return f"""
+## CHARACTER VOICE NOTES — FROM THE WRITER
+These notes come from the original writer. They outrank generic tone tags.
+Each character's English voice must follow its note consistently, scene to scene.
+{lines}"""
 
 
 def _build_tone_section(char_tones: dict) -> str:

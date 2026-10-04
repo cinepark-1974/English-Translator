@@ -13,6 +13,25 @@ Pipeline:
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.3.0 (2026-10-04)
+  - 완결성 검사 신설 — 페이지마다 씬 누락(S# 번호 대조)·분량 부족 검사
+    실패 시 1회 자동 재시도, 재실패 시 저장하지 않고 사유 표시
+    (v2.2.2 이전 Stage 1에서 각 페이지 뒷부분이 잘려 씬 절반이 사라진 사고 방지)
+  - 이어하기 — 완료된 페이지를 세션·백업 JSON에 보관, 실패 지점부터 재개
+  - 앞 단계를 다시 실행하면 뒤 단계 결과 자동 초기화 (낡은 결과 혼입 방지)
+  - 원고가 바뀌었는데 이전 결과가 남아 있으면 경고
+  - Stage 5 QA — 원고 전체 검토 (앞뒤 1만5천 자만 보내던 방식 폐기 →
+    '[...중간 생략...]' 오탐 제거), 원작 씬 수를 함께 전달
+  - API 일시 오류 자동 재시도 5회 (make_client)
+  - 대조표 파서 개선 (parse_translation_workbook)
+    · 약칭 열과 영문 대사 헤드 열 혼동 수정 (만복 → 만복 같은 한→한 매핑 제거)
+    · 영문이 없는 매핑 폐기
+    · '화면 텍스트·소품' '수치·단위 환산' 시트 → 현지화 항목
+    · '핵심 대사 고정 번역' 시트 → fixed_lines / '말투 지침' 시트 → voice_notes
+    · 약칭이 용어와 겹치면(교주) 용어 매핑 우선
+  - UI — 대조표 집계에 고정 대사·말투 지침 추가, 확인 탭 추가
+  - 검수 — 고정 대사 반영 여부, 제작사 오표기(Blue Gene) 탐지 추가
+
 v2.2.3 (2026-10-04)
   - 버그 수정: Stage 5 QA 리포트 빈 결과 저장 → 백업 진행도 4/5 표기 문제
   - call_api(): 응답 종료 사유 검사 신설
@@ -319,6 +338,9 @@ _BACKUP_KEYS = [
     "stage_4_result", "stage_5_result",
     # ★ v2.2 — 로컬라이징 매핑 (대조표 재업로드 없이 복구)
     "saved_char_map", "saved_char_tones", "saved_loc_map",
+    # ★ v2.3.0 — 원고 식별·씬 수 · 단계별 이어하기 보관분
+    "source_sig", "source_scene_count",
+    "partial_stage_1", "partial_stage_3", "partial_stage_4",
 ]
 
 
@@ -398,8 +420,14 @@ def make_backup_filename(title: str, done_count: int) -> str:
 # ═══════════════════════════════════════════════════
 
 # 시트 분류 키워드 (시트명에 포함되면 해당 분류)
+# ★ v2.3.0 — 판정 순서: 고정 대사 → 말투 지침 → 조·단역 → 현지화 항목 → 인물
+_SHEET_FIXED_KEYS = ["고정", "핵심 대사", "핵심대사", "locked", "fixed"]
+_SHEET_VOICE_KEYS = ["말투", "보이스", "voice", "어투", "화법"]
 _SHEET_EXTRAS_KEYS = ["단역", "조역", "조연", "extra", "minor", "bit"]
-_SHEET_PLACES_KEYS = ["지명", "기관", "장소", "용어", "명칭", "법률", "place", "location", "term"]
+_SHEET_PLACES_KEYS = ["지명", "기관", "장소", "용어", "명칭", "법률", "place", "location", "term",
+                      # ★ v2.3.0 — 화면 텍스트·소품 / 수치·단위 시트도 현지화 항목으로 분류
+                      "화면", "소품", "텍스트", "자막", "prop", "insert",
+                      "수치", "단위", "환산", "통화", "unit", "currency"]
 
 # 헤더 컬럼 인식 키워드
 _COL_KO_KEYS = ["한국명", "한국이름", "한국판", "한국어", "원문", "korean", "국문"]
@@ -408,6 +436,39 @@ _COL_WRONG_KEYS = ["v1", "수정 전", "수정전", "오표기", "before"]
 _COL_TONE_KEYS = ["톤", "tone"]
 _COL_SHORT_KEYS = ["약칭", "short"]        # 극중 축약 호칭 (석훈, 도현 …)
 _COL_CUE_KEYS = ["대사 헤드", "대사헤드", "cue", "헤드"]  # 대사 헤드 표기 (EARL …)
+_COL_SPEAKER_KEYS = ["화자", "인물", "speaker", "character"]   # ★ v2.3.0
+_COL_SCENE_KEYS = ["씬", "scene"]                              # ★ v2.3.0
+_COL_NOTE_KEYS = ["비고", "note", "메모"]                      # ★ v2.3.0
+
+_HANGUL_RE = re.compile(r"[가-힣]")
+
+
+def _has_latin(s: str) -> bool:
+    return bool(re.search(r"[A-Za-z]", s or ""))
+
+
+def _pick_cue_column(headers: list, exclude: set) -> int:
+    """영문 대사 헤드 열을 찾는다. (v2.3.0)
+
+    '약칭 (대사 헤드)'처럼 한국어 약칭 열에도 '대사 헤드'가 들어가는 경우가 있어,
+    약칭 열은 제외하고 '영/english/en'이 들어간 헤더를 우선한다.
+    일본어 대사 헤드 열('대사 헤드 (일)')은 제외한다.
+    """
+    best, best_score = -1, -1
+    for idx, h in enumerate(headers):
+        if idx in exclude:
+            continue
+        hn = _norm_header(h)
+        if not hn or not any(_norm_header(k) in hn for k in _COL_CUE_KEYS):
+            continue
+        if "(일)" in hn or "일본" in hn or "japan" in hn or "약칭" in hn:
+            continue
+        score = 1
+        if "(영)" in hn or "영문" in hn or "english" in hn or "(en)" in hn:
+            score += 2
+        if score > best_score:
+            best, best_score = idx, score
+    return best
 
 
 def _norm_header(v) -> str:
@@ -528,19 +589,40 @@ def _is_safe_correction(bad: str, good: str) -> bool:
     return True
 
 
+def _match_char_name(name: str, char_map: dict) -> str:
+    """'서광명 목사' 같은 표기를 인물표의 영문명으로 연결한다. (v2.3.0)"""
+    name = (name or "").strip()
+    if not name:
+        return ""
+    if name in char_map:
+        return char_map[name]
+    compact = name.replace(" ", "")
+    # 긴 한국명부터 비교해 부분 일치 오매칭을 줄인다
+    for ko in sorted(char_map.keys(), key=len, reverse=True):
+        k = ko.replace(" ", "")
+        if len(k) >= 2 and (k in compact or compact in k):
+            return char_map[ko]
+    return ""
+
+
 def parse_translation_workbook(uploaded_file):
-    """XLSX 로컬라이징 대조표를 파싱한다. (v2.2)
+    """XLSX 로컬라이징 대조표를 파싱한다. (v2.2 → v2.3.0 확장)
 
     반환: (char_map, char_tones, loc_map)
-      char_map  : {한국명: 영문명}            — 주요 등장인물
+      char_map  : {한국명/약칭: 영문명}        — 주요 등장인물
       char_tones: {영문명: tone}              — 톤 태그 열이 있을 때
       loc_map   : {
-            "extras":      {한국명: 영문명},
-            "places":      {한국어 원문: 확정 영문},
+            "extras":      {한국명: 영문명},                 # 조·단역
+            "places":      {한국어 원문: 확정 영문},          # 지명·기관·용어·화면 텍스트·수치
             "corrections": {v1 오표기 영문: 확정 영문},
+            "fixed_lines": [{"scene","speaker","ko","en"}],  # ★ v2.3.0 핵심 대사 고정 번역
+            "voice_notes": {인물 표기: 영문판 말투 지침},     # ★ v2.3.0 말투 지침
         }
 
-    시트명/헤더명을 키워드로 자동 인식하므로 작품별 표 구성이 조금 달라도 동작한다.
+    ★ v2.3.0 수정
+      - 약칭 열과 영문 대사 헤드 열을 혼동하던 문제 수정 (만복 → 만복 같은 한→한 매핑 제거)
+      - 한국어 → 한국어 매핑, 영문 칸에 영문이 없는 매핑은 버린다
+      - 고정 대사 / 말투 지침 시트를 인물표로 잘못 읽던 문제 수정
     """
     try:
         import openpyxl
@@ -552,12 +634,19 @@ def parse_translation_workbook(uploaded_file):
     wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
 
     char_map, char_tones = {}, {}
-    loc_map = {"extras": {}, "places": {}, "corrections": {}}
+    loc_map = {"extras": {}, "places": {}, "corrections": {},
+               "fixed_lines": [], "voice_notes": {}}
+    pending_voice = []   # 인물표를 다 읽은 뒤 영문명과 연결
+    short_keys = set()   # 약칭으로 추가된 키
 
     for ws in wb.worksheets:
         sheet_name = str(ws.title).lower()
 
-        if any(k in sheet_name for k in _SHEET_EXTRAS_KEYS):
+        if any(k in sheet_name for k in _SHEET_FIXED_KEYS):
+            bucket = "fixed_lines"
+        elif any(k in sheet_name for k in _SHEET_VOICE_KEYS):
+            bucket = "voice_notes"
+        elif any(k in sheet_name for k in _SHEET_EXTRAS_KEYS):
             bucket = "extras"
         elif any(k in sheet_name for k in _SHEET_PLACES_KEYS):
             bucket = "places"
@@ -582,9 +671,44 @@ def parse_translation_workbook(uploaded_file):
 
         ko_i = _pick_column(headers, _COL_KO_KEYS)
         en_i = _pick_column(headers, _COL_EN_KEYS, exclude_keys=_COL_WRONG_KEYS)
+        data_rows = rows[header_idx + 1:]
+
+        def _cell(row, i, strip=False):
+            return _clean_term(row[i], strip_kr_note=strip) if (i >= 0 and len(row) > i) else ""
+
+        # ── ★ v2.3.0 고정 대사 시트 ──
+        if bucket == "fixed_lines":
+            sp_i = _pick_column(headers, _COL_SPEAKER_KEYS)
+            sc_i = _pick_column(headers, _COL_SCENE_KEYS)
+            for row in data_rows:
+                if not row:
+                    continue
+                ko, en = _cell(row, ko_i), _cell(row, en_i)
+                if ko and en and _has_latin(en):
+                    loc_map["fixed_lines"].append({
+                        "scene": _cell(row, sc_i),
+                        "speaker": _cell(row, sp_i),
+                        "ko": ko,
+                        "en": en,
+                    })
+            continue
+
+        # ── ★ v2.3.0 말투 지침 시트 ──
+        if bucket == "voice_notes":
+            sp_i = _pick_column(headers, _COL_SPEAKER_KEYS)
+            note_i = _pick_column(headers, _COL_NOTE_KEYS)
+            for row in data_rows:
+                if not row:
+                    continue
+                who, en = _cell(row, sp_i), _cell(row, en_i)
+                if who and en:
+                    note = _cell(row, note_i)
+                    pending_voice.append((who, en + (f" — {note}" if note else "")))
+            continue
+
         tone_i = _pick_column(headers, _COL_TONE_KEYS)
         short_i = _pick_column(headers, _COL_SHORT_KEYS)
-        cue_i = _pick_column(headers, _COL_CUE_KEYS)
+        cue_i = _pick_cue_column(headers, exclude={short_i, ko_i, en_i})
 
         # v1 오표기 열: 'v1 대비 변경'(설명문)과 'v1 영문판'(표기)을 구분한다.
         # 반드시 '영문/english'가 함께 들어있는 헤더만 인정.
@@ -598,23 +722,28 @@ def parse_translation_workbook(uploaded_file):
                 wrong_i = idx
                 break
 
-        for row in rows[header_idx + 1:]:
+        for row in data_rows:
             if not row or len(row) <= max(ko_i, en_i):
                 continue
             ko = _clean_term(row[ko_i])
             en = _clean_term(row[en_i], strip_kr_note=True)
             if not ko or not en:
                 continue
+            # ★ v2.3.0 — 영문 칸에 영문이 없거나 한국어 그대로인 매핑은 버린다
+            if ko == en or not _has_latin(en):
+                continue
 
             if bucket == "characters":
                 char_map[ko] = en
 
-                # 약칭(석훈) → 대사 헤드(EARL) 도 매핑에 포함한다.
-                # 원고 본문·대사 헤드에는 약칭이 훨씬 자주 등장한다.
-                cue = _clean_term(row[cue_i], strip_kr_note=True) if (cue_i >= 0 and len(row) > cue_i) else ""
-                short = _clean_term(row[short_i]) if (short_i >= 0 and len(row) > short_i) else ""
-                if short and short not in char_map:
+                # 약칭(만복) → 영문 대사 헤드(WALT). 영문 대사 헤드가 없으면 영문명.
+                cue = _cell(row, cue_i, strip=True)
+                if not _has_latin(cue) or _HANGUL_RE.search(cue):
+                    cue = ""
+                short = _cell(row, short_i)
+                if short and short != ko and short not in char_map and not _has_latin(short):
                     char_map[short] = cue or en
+                    short_keys.add(short)
 
                 if tone_i >= 0 and len(row) > tone_i:
                     tone = _clean_term(row[tone_i]).lower()
@@ -629,6 +758,21 @@ def parse_translation_workbook(uploaded_file):
                 for variant in _split_variants(wrong_raw):
                     if _is_safe_correction(variant, en):
                         loc_map["corrections"][variant] = en
+
+    # 약칭이 용어 시트에도 있으면(예: 교주 → ELIAS / 교주 → the Prophet)
+    # 지문·대사 속 호칭은 용어 쪽(the Prophet)이 맞으므로 약칭 매핑을 뺀다.
+    # 정식 한국명(박성광 → PROPHET ELIAS BRIGHT)은 그대로 남는다.
+    for ko in list(loc_map["places"].keys()):
+        if ko in short_keys:
+            char_map.pop(ko, None)
+        elif ko in char_map:
+            del loc_map["places"][ko]
+
+    # 말투 지침을 영문 인물명에 연결
+    for who, note in pending_voice:
+        en_name = _match_char_name(who, char_map)
+        label = f"{en_name} ({who})" if en_name else who
+        loc_map["voice_notes"][label] = note
 
     return char_map, char_tones, loc_map
 
@@ -686,6 +830,7 @@ _RESIDUE_PATTERNS = [
     (r"\$[\d,]+\s*WON", "통화 혼용 오류 ($...WON)"),
     (r"\b(?:20\d\d)-?(?:GoHap|고합)", "한국식 사건번호"),
     (r"\b(?:Kimchi|Soju|Hanbok|Chuseok|Seollal)\b", "미현지화 문화어"),
+    (r"\bBlue\s*Gene\b|\bBluejeans?\b(?!\s*PICTURES)", "제작사 표기 오류 (BLUE JEANS PICTURES)"),  # ★ v2.3.0
 ]
 
 
@@ -726,6 +871,15 @@ def check_glossary_residue(text: str, char_map: dict, loc_map: dict) -> dict:
                 if h and h not in uniq:
                     uniq.append(h)
             result["residue"].append((label, uniq[:8], len(hits)))
+
+    # ★ v2.3.0 — 고정 대사가 실제로 들어갔는지 (첫 구절 기준 유연 매칭)
+    for f in (loc_map or {}).get("fixed_lines") or []:
+        en = str(f.get("en") or "")
+        first = re.split(r"\s*/\s*", en)[0].strip().strip(".").strip()
+        probe = " ".join(first.split()[:6])
+        if probe and not _flexible_pattern(probe).search(text):
+            tag = f"고정 대사 S#{f.get('scene')}" if f.get("scene") else "고정 대사"
+            result["missing"].append((f.get("ko"), en, tag))
 
     corrections = (loc_map or {}).get("corrections") or {}
     for bad, good in corrections.items():
@@ -976,42 +1130,166 @@ def call_api(client, text: str, system_prompt: str, model_id: str,
     return output
 
 
+# ═══════════════════════════════════════════════════
+# ★ v2.3.0 — 완결성 검사 · 이어하기 · 재시도
+# ═══════════════════════════════════════════════════
+
+_SCENE_NUM_RE = re.compile(r'^\s*S\s*#\s*(\d+)', re.MULTILINE | re.IGNORECASE)
+_SCENE_HEAD_RE = re.compile(r'^\s*(?:S\s*#?\s*\d+\.?\s*)?(?:INT\.|EXT\.|INT\./EXT\.|EXT\./INT\.|I/E\.)',
+                            re.MULTILINE | re.IGNORECASE)
+
+# 출력 분량 하한 (입력 대비 글자 수 비율). 이보다 짧으면 장면이 빠졌다고 본다.
+#   한→영: 영어가 한국어보다 길어지는 것이 정상 (실측 약 1.9배)
+#   영→영: 리라이트로 다소 줄 수 있으나 절반 이하로 줄면 누락
+_MIN_RATIO = {"ko2en": 0.8, "en2en": 0.5}
+
+
+def count_scenes(text: str) -> int:
+    """씬 수를 센다. S#번호 기준, 없으면 INT./EXT. 헤딩 기준."""
+    if not text:
+        return 0
+    nums = _SCENE_NUM_RE.findall(text)
+    if nums:
+        return len(set(nums))
+    return len(_SCENE_HEAD_RE.findall(text))
+
+
+def check_completeness(src: str, out: str, mode: str) -> str:
+    """페이지 단위 완결성 검사. 문제가 없으면 빈 문자열, 있으면 사유를 돌려준다."""
+    src_nums = set(_SCENE_NUM_RE.findall(src or ""))
+    if src_nums:
+        out_nums = set(_SCENE_NUM_RE.findall(out or ""))
+        missing = sorted(src_nums - out_nums, key=int)
+        # S#가 빠졌어도 INT./EXT. 헤딩 수가 충분하면 통과
+        if missing and len(_SCENE_HEAD_RE.findall(out or "")) < len(src_nums):
+            shown = ", ".join(f"S#{n}" for n in missing[:12])
+            more = f" 외 {len(missing) - 12}개" if len(missing) > 12 else ""
+            return f"씬 누락 — {shown}{more}"
+    else:
+        src_heads = len(_SCENE_HEAD_RE.findall(src or ""))
+        out_heads = len(_SCENE_HEAD_RE.findall(out or ""))
+        if src_heads and out_heads < src_heads:
+            return f"씬 헤딩 수 부족 — 입력 {src_heads}개 / 출력 {out_heads}개"
+
+    src_len = len((src or "").strip())
+    out_len = len((out or "").strip())
+    ratio = _MIN_RATIO.get(mode, 0.5)
+    if src_len >= 1500 and out_len < src_len * ratio:
+        return f"분량 부족 — 입력 {src_len:,}자 대비 출력 {out_len:,}자 (기준 {int(ratio*100)}% 미만)"
+    return ""
+
+
+def make_client(key: str):
+    """일시적 서버 혼잡(429/529 등)에 자동 재시도하는 클라이언트."""
+    return anthropic.Anthropic(api_key=key, max_retries=5)
+
+
+def _job_signature(system_prompt: str, pages: list) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    h.update(system_prompt.encode("utf-8"))
+    for p in pages:
+        h.update(b"\x00")
+        h.update(p.encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
+def text_signature(text: str) -> str:
+    import hashlib
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()[:16]
+
+
 def run_stage_on_pages(client, pages: list, system_prompt: str,
                        model_id: str, stage_name: str,
                        progress_bar, status_area,
-                       max_tokens: int = 32000) -> list:
-    """Run an API-based stage on multiple pages with progress tracking."""
-    results = []
+                       max_tokens: int = 32000,
+                       stage_key: str = "",
+                       check_mode: str = "en2en") -> list:
+    """Run an API-based stage on multiple pages with progress tracking.
+
+    ★ v2.3.0
+      - 페이지마다 완결성 검사(씬 누락·분량 부족). 실패하면 1회 자동 재시도, 그래도 실패하면 중단.
+      - 완료된 페이지는 세션에 보관. 중간에 실패해도 다시 실행하면 실패한 페이지부터 이어서 진행.
+        (설정·대조표·원고가 바뀌면 보관분은 자동 폐기하고 처음부터 진행)
+    """
     total = len(pages)
+    sig = _job_signature(system_prompt, pages)
+    partial_key = f"partial_{stage_key}" if stage_key else ""
 
-    for idx, page in enumerate(pages):
+    results = []
+    if partial_key:
+        saved = st.session_state.get(partial_key) or {}
+        if saved.get("sig") == sig:
+            results = list(saved.get("results") or [])
+        if results:
+            st.info(f"↪️ 이전 실행에서 완료된 {len(results)}/{total} 페이지를 이어서 사용합니다.")
+            progress_bar.progress(len(results) / total)
+
+    for idx in range(len(results), total):
+        page = pages[idx]
         page_num = idx + 1
-        status_area.markdown(
-            f'<div class="progress-text">🔄 {stage_name} — 페이지 {page_num}/{total} 처리 중... (모델: {model_id})</div>',
-            unsafe_allow_html=True
-        )
+        result = None
+        last_problem = ""
 
-        try:
-            result = call_api(
-                client, page, system_prompt, model_id,
-                max_tokens=max_tokens,
-                page_info=f"Page {page_num} of {total}. Maintain consistency."
+        for attempt in (1, 2):
+            retry_note = " · 재시도" if attempt == 2 else ""
+            status_area.markdown(
+                f'<div class="progress-text">🔄 {stage_name} — 페이지 {page_num}/{total} 처리 중{retry_note}... (모델: {model_id})</div>',
+                unsafe_allow_html=True
             )
-            results.append(result)
-        except anthropic.APIError as e:
-            error_msg = f"❌ API 오류 ({stage_name}, 페이지 {page_num}): {e}"
-            st.error(error_msg)
-            st.session_state["last_error"] = error_msg
-            return None
-        except Exception as e:
-            error_msg = f"❌ 오류 ({stage_name}, 페이지 {page_num}): {type(e).__name__}: {e}"
+            try:
+                out = call_api(
+                    client, page, system_prompt, model_id,
+                    max_tokens=max_tokens,
+                    page_info=f"Page {page_num} of {total}. Maintain consistency. "
+                              f"Process this page COMPLETELY, from its first line to its last line",
+                )
+            except anthropic.APIError as e:
+                error_msg = f"❌ API 오류 ({stage_name}, 페이지 {page_num}): {e}"
+                st.error(error_msg)
+                st.session_state["last_error"] = error_msg
+                return None
+            except Exception as e:
+                last_problem = f"{type(e).__name__}: {e}"
+                continue
+
+            problem = check_completeness(page, out, check_mode)
+            if not problem:
+                result = out
+                break
+            last_problem = problem
+
+        if result is None:
+            done_note = (f" 완료된 {len(results)}페이지는 보관했습니다. 다시 실행하면 {page_num}페이지부터 이어서 진행합니다."
+                         if partial_key and results else "")
+            error_msg = (f"❌ {stage_name} — 페이지 {page_num}/{total} 결과가 불완전해 저장하지 않았습니다 "
+                         f"(2회 시도). 사유: {last_problem}.{done_note}")
             st.error(error_msg)
             st.session_state["last_error"] = error_msg
             return None
 
+        results.append(result)
+        if partial_key:
+            st.session_state[partial_key] = {"sig": sig, "results": list(results)}
         progress_bar.progress(page_num / total)
 
+    if partial_key:
+        st.session_state.pop(partial_key, None)
+    st.session_state.pop("last_error", None)
     return results
+
+
+_STAGE_KEYS = ["stage_1_result", "stage_2_result", "stage_3_result",
+               "stage_4_result", "stage_5_result"]
+
+
+def clear_downstream(stage_num: int):
+    """★ v2.3.0 — 앞 단계를 다시 돌리면 그 뒤 단계 결과는 낡은 결과이므로 지운다."""
+    for n in range(stage_num + 1, 6):
+        st.session_state[f"stage_{n}_result"] = None
+        st.session_state.pop(f"partial_stage_{n}", None)
+    for k in ("audit_report", "enforced_result", "enforce_log"):
+        st.session_state.pop(k, None)
 
 
 # ─────────────────────────────────────────────
@@ -1274,7 +1552,8 @@ char_map_file = st.file_uploader(
 
 char_map = {}
 char_tones = {}
-loc_map = {"extras": {}, "places": {}, "corrections": {}}
+loc_map = {"extras": {}, "places": {}, "corrections": {},
+           "fixed_lines": [], "voice_notes": {}}
 
 if char_map_file:
     fname = char_map_file.name.lower()
@@ -1293,11 +1572,13 @@ if char_map_file:
         st.session_state["saved_char_tones"] = char_tones
         st.session_state["saved_loc_map"] = loc_map
 
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("주요 인물", f"{len(char_map)}")
         c2.metric("조·단역", f"{len(loc_map.get('extras') or {})}")
         c3.metric("지명·기관·용어", f"{len(loc_map.get('places') or {})}")
-        c4.metric("교정 매핑", f"{len(loc_map.get('corrections') or {})}")
+        c4.metric("고정 대사", f"{len(loc_map.get('fixed_lines') or [])}")
+        c5.metric("말투 지침", f"{len(loc_map.get('voice_notes') or {})}")
+        c6.metric("교정 매핑", f"{len(loc_map.get('corrections') or {})}")
 
         st.success(
             f"✅ 총 {len(char_map) + count_loc_entries(loc_map)}건 로드 "
@@ -1305,8 +1586,8 @@ if char_map_file:
         )
 
         with st.expander("📑 로드된 매핑 확인", expanded=False):
-            tab1, tab2, tab3, tab4 = st.tabs(
-                ["주요 인물", "조·단역", "지명·기관·용어", "교정 매핑"]
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(
+                ["주요 인물", "조·단역", "지명·기관·용어", "교정 매핑", "고정 대사·말투"]
             )
             with tab1:
                 if char_map:
@@ -1342,6 +1623,18 @@ if char_map_file:
                     st.table([{"오표기": k, "확정 표기": v} for k, v in corrections.items()])
                 else:
                     st.caption("없음")
+            with tab5:
+                fixed = loc_map.get("fixed_lines") or []
+                voice = loc_map.get("voice_notes") or {}
+                if fixed:
+                    st.markdown("**핵심 대사 고정 번역** — 번역문에 그대로 들어갑니다")
+                    st.table([{"씬": f.get("scene"), "화자": f.get("speaker"),
+                               "한국어": f.get("ko"), "고정 영문": f.get("en")} for f in fixed])
+                if voice:
+                    st.markdown("**말투 지침** — Stage 3·4에 전달됩니다")
+                    st.table([{"인물": k, "영문판 지침": v} for k, v in voice.items()])
+                if not (fixed or voice):
+                    st.caption("없음")
     else:
         st.warning("⚠️ 매핑을 읽을 수 없습니다. 시트 헤더에 '한국명'과 '영문명' 열이 있는지 확인해 주세요.")
 
@@ -1364,7 +1657,7 @@ if char_map and not char_tones:
         #   저장되므로 영문명당 한 번만 표시한다.
         _seen_tone_en = set()
         for ko, en in char_map.items():
-            if en in _seen_tone_en:
+            if en in _seen_tone_en or not _has_latin(en):
                 continue
             _seen_tone_en.add(en)
             tone = st.selectbox(
@@ -1584,6 +1877,21 @@ if not api_key:
 elif not source_text.strip():
     st.warning("⬆️ 시나리오 텍스트를 입력하세요.")
 
+# ★ v2.3.0 — 원고가 바뀌었는데 이전 원고의 결과가 남아 있으면 경고
+if source_text.strip() and st.session_state.get("stage_1_result") \
+        and st.session_state.get("source_sig") \
+        and st.session_state.get("source_sig") != text_signature(source_text):
+    st.warning(
+        "⚠️ 지금 입력된 원고가 Stage 1을 실행했던 원고와 다릅니다. "
+        "아래 결과는 이전 원고 기준입니다. 새 원고로 진행하려면 Stage 1을 다시 실행하세요 "
+        "(Stage 2~5 결과는 자동으로 비워집니다)."
+    )
+
+if source_text.strip():
+    _sc = count_scenes(source_text)
+    if _sc:
+        st.caption(f"🎬 원고 씬 수: {_sc}개 — 각 단계는 페이지마다 씬 누락을 검사합니다.")
+
 # ── Initialize session state for each stage ──
 for key in ["stage_1_result", "stage_2_result", "stage_3_result", "stage_4_result", "stage_5_result"]:
     if key not in st.session_state:
@@ -1635,7 +1943,7 @@ st.caption("한국어 → 영어 직역. 충실한 번역이 목표.")
 
 if can_run:
     if st.button("▶️ Stage 1 실행", key="btn_stage1", use_container_width=True):
-        client = anthropic.Anthropic(api_key=api_key)
+        client = make_client(api_key)
         region_id = selected_region["id"]
 
         system_prompt = build_stage1_prompt(
@@ -1655,10 +1963,14 @@ if can_run:
             client, pages, system_prompt, model_id,
             "Stage 1: Raw Translation", progress_bar, status_area,
             max_tokens=MODEL_POLICY["stage_1"]["max_tokens"],
+            stage_key="stage_1", check_mode="ko2en",
         )
 
         if results is not None:
             st.session_state["stage_1_result"] = "\n\n".join(results)
+            st.session_state["source_sig"] = text_signature(source_text)
+            st.session_state["source_scene_count"] = count_scenes(source_text)
+            clear_downstream(1)
             status_area.markdown('<div class="progress-text">✅ Stage 1 완료!</div>', unsafe_allow_html=True)
             st.rerun()
 
@@ -1677,6 +1989,7 @@ if stage_2_input:
     if st.button("▶️ Stage 2 실행", key="btn_stage2", use_container_width=True):
         region_id = selected_region["id"]
         st.session_state["stage_2_result"] = apply_format_conversion(stage_2_input, region_id)
+        clear_downstream(2)
         st.rerun()
 elif st.session_state.get("stage_2_result") is None:
     st.caption("⏳ Stage 1을 먼저 완료하세요.")
@@ -1694,7 +2007,7 @@ st.caption("번역체 제거, 네이티브 문체로 리라이트. 가장 시간
 stage_3_input = upload_previous_result(3, "Stage 2 Format", "stage_2_result")
 if stage_3_input and api_key:
     if st.button("▶️ Stage 3 실행", key="btn_stage3", use_container_width=True):
-        client = anthropic.Anthropic(api_key=api_key)
+        client = make_client(api_key)
         region_id = selected_region["id"]
 
         system_prompt = build_stage3_prompt(
@@ -1715,10 +2028,12 @@ if stage_3_input and api_key:
             client, pages, system_prompt, model_id,
             "Stage 3: Voice Rewrite", progress_bar, status_area,
             max_tokens=MODEL_POLICY["stage_3"]["max_tokens"],
+            stage_key="stage_3", check_mode="en2en",
         )
 
         if results is not None:
             st.session_state["stage_3_result"] = "\n\n".join(results)
+            clear_downstream(3)
             status_area.markdown('<div class="progress-text">✅ Stage 3 완료!</div>', unsafe_allow_html=True)
             st.rerun()
 elif st.session_state.get("stage_3_result") is None:
@@ -1737,7 +2052,7 @@ st.caption("대사 전문 폴리시. 캐릭터 톤 태그 반영.")
 stage_4_input = upload_previous_result(4, "Stage 3 Voice Rewrite", "stage_3_result")
 if stage_4_input and api_key:
     if st.button("▶️ Stage 4 실행", key="btn_stage4", use_container_width=True):
-        client = anthropic.Anthropic(api_key=api_key)
+        client = make_client(api_key)
         region_id = selected_region["id"]
 
         system_prompt = build_stage4_prompt(
@@ -1758,10 +2073,12 @@ if stage_4_input and api_key:
             client, pages, system_prompt, model_id,
             "Stage 4: Dialogue Polish", progress_bar, status_area,
             max_tokens=MODEL_POLICY["stage_4"]["max_tokens"],
+            stage_key="stage_4", check_mode="en2en",
         )
 
         if results is not None:
             st.session_state["stage_4_result"] = "\n\n".join(results)
+            clear_downstream(4)
             status_area.markdown('<div class="progress-text">✅ Stage 4 완료!</div>', unsafe_allow_html=True)
             st.rerun()
 elif st.session_state.get("stage_4_result") is None:
@@ -1780,7 +2097,7 @@ st.caption("최종 품질 검증. 포맷/일관성/언어/스토리 체크리스
 stage_5_input = upload_previous_result(5, "Stage 4 Dialogue Polish", "stage_4_result")
 if stage_5_input and api_key:
     if st.button("▶️ Stage 5 실행", key="btn_stage5", use_container_width=True):
-        client = anthropic.Anthropic(api_key=api_key)
+        client = make_client(api_key)
         region_id = selected_region["id"]
 
         system_prompt = build_stage5_prompt(
@@ -1797,13 +2114,16 @@ if stage_5_input and api_key:
         )
 
         try:
+            # ★ v2.3.0 — 원고 전체를 검토한다 (앞뒤만 잘라 보내던 방식 폐기)
             qa_input = stage_5_input
-            if len(qa_input) > 30000:
-                qa_input = stage_5_input[:15000] + "\n\n[...중간 생략...]\n\n" + stage_5_input[-15000:]
+            _exp = st.session_state.get("source_scene_count") or 0
+            _qa_info = (f"Expected scene count from the Korean original: {_exp}"
+                        if _exp else "")
 
             qa_report = call_api(
                 client, qa_input, system_prompt,
-                model_id, max_tokens=MODEL_POLICY["stage_5"]["max_tokens"]
+                model_id, max_tokens=MODEL_POLICY["stage_5"]["max_tokens"],
+                page_info=_qa_info,
             )
             st.session_state["stage_5_result"] = qa_report
             status_area.markdown('<div class="progress-text">✅ Stage 5 완료!</div>', unsafe_allow_html=True)
@@ -2001,7 +2321,11 @@ if final_result:
     st.markdown("")
     if st.button("🗑️ 전체 초기화 (새 프로젝트)", use_container_width=True):
         for key in ["stage_1_result", "stage_2_result", "stage_3_result",
-                     "stage_4_result", "stage_5_result", "last_error"]:
+                     "stage_4_result", "stage_5_result", "last_error",
+                     # ★ v2.3.0
+                     "partial_stage_1", "partial_stage_3", "partial_stage_4",
+                     "source_sig", "source_scene_count",
+                     "audit_report", "enforced_result", "enforce_log"]:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()

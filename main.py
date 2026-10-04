@@ -13,6 +13,15 @@ Pipeline:
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.2.3 (2026-10-04)
+  - 버그 수정: Stage 5 QA 리포트 빈 결과 저장 → 백업 진행도 4/5 표기 문제
+  - call_api(): 응답 종료 사유 검사 신설
+    · 본문 없음(사고만 하고 종료) → 오류
+    · max_tokens 도달로 본문 절단 → 오류 (잘린 번역문 저장 방지)
+    · refusal(응답 거부) → 오류
+  - 단계별 max_tokens를 prompt.py MODEL_POLICY에서 받아 사용
+    (기존 하드코딩 8,000 / Stage 5 4,000 → 32,000 / 16,000)
+
 v2.2.2 (2026-10-04)
   - 버그 수정: 퇴역 모델 ID로 인한 API 404 오류 — prompt.py MODEL_POLICY 교체
     (main.py 코드 변경 없음, 변경 기록만 추가)
@@ -924,7 +933,7 @@ def apply_format_conversion(text: str, region_id: str) -> str:
 # ─────────────────────────────────────────────
 
 def call_api(client, text: str, system_prompt: str, model_id: str,
-             max_tokens: int = 8000, page_info: str = "") -> str:
+             max_tokens: int = 32000, page_info: str = "") -> str:
     """Call Claude API with streaming to prevent timeout."""
     # 페이지 정보는 시스템 프롬프트에 추가 (본문에 섞이면 출력에 포함됨)
     full_system = system_prompt
@@ -945,13 +954,32 @@ def call_api(client, text: str, system_prompt: str, model_id: str,
     ) as stream:
         for text_chunk in stream.text_stream:
             collected.append(text_chunk)
+        final = stream.get_final_message()
 
-    return "".join(collected)
+    output = "".join(collected)
+
+    # ★ v2.2.3 — 응답 검사. 문제가 있으면 예외를 던져 결과가 저장되지 않게 한다.
+    stop = getattr(final, "stop_reason", None)
+    if stop == "max_tokens":
+        raise RuntimeError(
+            f"응답이 길이 한도({max_tokens:,} 토큰)에 걸려 중간에 끊겼습니다. "
+            "잘린 결과는 저장하지 않았습니다. prompt.py MODEL_POLICY의 max_tokens를 늘려 주세요."
+        )
+    if stop == "refusal":
+        raise RuntimeError("모델이 이 페이지의 응답을 거부했습니다 (stop_reason: refusal).")
+    if not output.strip():
+        raise RuntimeError(
+            f"모델이 본문 없이 응답을 끝냈습니다 (stop_reason: {stop}). "
+            "빈 결과는 저장하지 않았습니다. 다시 실행해 주세요."
+        )
+
+    return output
 
 
 def run_stage_on_pages(client, pages: list, system_prompt: str,
                        model_id: str, stage_name: str,
-                       progress_bar, status_area) -> list:
+                       progress_bar, status_area,
+                       max_tokens: int = 32000) -> list:
     """Run an API-based stage on multiple pages with progress tracking."""
     results = []
     total = len(pages)
@@ -966,6 +994,7 @@ def run_stage_on_pages(client, pages: list, system_prompt: str,
         try:
             result = call_api(
                 client, page, system_prompt, model_id,
+                max_tokens=max_tokens,
                 page_info=f"Page {page_num} of {total}. Maintain consistency."
             )
             results.append(result)
@@ -1624,7 +1653,8 @@ if can_run:
 
         results = run_stage_on_pages(
             client, pages, system_prompt, model_id,
-            "Stage 1: Raw Translation", progress_bar, status_area
+            "Stage 1: Raw Translation", progress_bar, status_area,
+            max_tokens=MODEL_POLICY["stage_1"]["max_tokens"],
         )
 
         if results is not None:
@@ -1683,7 +1713,8 @@ if stage_3_input and api_key:
 
         results = run_stage_on_pages(
             client, pages, system_prompt, model_id,
-            "Stage 3: Voice Rewrite", progress_bar, status_area
+            "Stage 3: Voice Rewrite", progress_bar, status_area,
+            max_tokens=MODEL_POLICY["stage_3"]["max_tokens"],
         )
 
         if results is not None:
@@ -1725,7 +1756,8 @@ if stage_4_input and api_key:
 
         results = run_stage_on_pages(
             client, pages, system_prompt, model_id,
-            "Stage 4: Dialogue Polish", progress_bar, status_area
+            "Stage 4: Dialogue Polish", progress_bar, status_area,
+            max_tokens=MODEL_POLICY["stage_4"]["max_tokens"],
         )
 
         if results is not None:
@@ -1771,7 +1803,7 @@ if stage_5_input and api_key:
 
             qa_report = call_api(
                 client, qa_input, system_prompt,
-                model_id, max_tokens=4000
+                model_id, max_tokens=MODEL_POLICY["stage_5"]["max_tokens"]
             )
             st.session_state["stage_5_result"] = qa_report
             status_area.markdown('<div class="progress-text">✅ Stage 5 완료!</div>', unsafe_allow_html=True)

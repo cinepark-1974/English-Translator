@@ -15,6 +15,14 @@ Character Tone Tags: formal / casual / street
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.2.3 (2026-10-04)
+  - 버그 수정: Stage 5 QA 리포트가 빈 내용으로 저장되던 문제
+    · 원인: Claude 5.5 계열은 사고(adaptive thinking)가 기본 ON이며
+      사고 분량이 max_tokens에 합산됨. Stage 5 한도 4,000이 사고에 소진
+  - MODEL_POLICY에 단계별 max_tokens 신설
+    Stage 1·3·4 → 32,000 / Stage 5 → 16,000
+  - (main.py) 빈 응답·한도 초과 절단 응답을 오류로 처리, 저장하지 않음
+
 v2.2.2 (2026-10-04)
   - 버그 수정: Stage 1 API 404 오류 (model not_found)
     · 원인: claude-sonnet-4-20250514 / claude-opus-4-20250514 가
@@ -57,7 +65,7 @@ v2.0
 # ENGINE VERSION (세만틱 버저닝)
 # ═══════════════════════════════════════════════════
 
-ENGINE_VERSION = "2.2.2"
+ENGINE_VERSION = "2.2.3"
 ENGINE_BUILD_DATE = "2026-10-04"
 
 # ═══════════════════════════════════════════════════
@@ -911,26 +919,34 @@ def _build_tone_section(char_tones: dict) -> str:
 # MODEL POLICY
 # ═══════════════════════════════════════════════════
 
+# ★ v2.2.3 — Claude 5.5 계열은 답변 전 사고(adaptive thinking)가 기본으로 켜져 있고,
+#   사고 분량도 max_tokens 안에서 함께 차감된다. 한도가 낮으면 사고만 하다
+#   본문 없이 끝날 수 있으므로 단계별 한도를 넉넉히 둔다.
+#   (청구는 실제 사용량 기준 — 한도를 올려도 쓰지 않은 만큼은 과금되지 않음)
 MODEL_POLICY = {
     "stage_1": {
         "name": "Raw Translation",
         "model": "claude-sonnet-5-5",
         "reason": "정확한 번역 — 속도+품질 균형",
+        "max_tokens": 32000,   # ★ v2.2.3 — 사고(thinking)+본문 합산 한도
     },
     "stage_3": {
         "name": "Voice Rewrite",
         "model": "claude-opus-5-5",
         "reason": "네이티브 문체 리라이팅 — 최고 품질 필수",
+        "max_tokens": 32000,   # ★ v2.2.3 — 사고(thinking)+본문 합산 한도
     },
     "stage_4": {
         "name": "Dialogue Polish",
         "model": "claude-opus-5-5",
         "reason": "대사 현지화 — 문화적 뉘앙스 필수",
+        "max_tokens": 32000,   # ★ v2.2.3 — 사고(thinking)+본문 합산 한도
     },
     "stage_5": {
         "name": "QA Check",
         "model": "claude-sonnet-5-5",
         "reason": "체크리스트 기반 검증 — Sonnet으로 충분",
+        "max_tokens": 16000,   # ★ v2.2.3 — 사고(thinking)+본문 합산 한도
     },
 }
 

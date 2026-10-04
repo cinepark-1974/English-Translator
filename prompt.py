@@ -15,6 +15,13 @@ Character Tone Tags: formal / casual / street
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.3.1 (2026-10-04)
+  - 버그 수정: Stage 5 QA가 길이 한도(16,000)에 걸려 중단
+    · 원인: v2.3.0부터 원고 전체(약 10만 자)를 검토하면서 사고량·리포트 분량 증가
+    · MODEL_POLICY stage_5 max_tokens 16,000 → 64,000
+    · STAGE_5 REPORT LENGTH 지침 추가 — 문제만 보고, 확인된 항목 나열 금지,
+      수정 목록 상위 25개, 전체 1,500단어 내외
+
 v2.3.0 (2026-10-04)
   - 기능 추가: 대조표 '핵심 대사 고정 번역' 시트 → LOCKED LINES 섹션
     (Stage 1·3·4 원문 그대로 사용 강제, Stage 5 검증)
@@ -77,7 +84,7 @@ v2.0
 # ENGINE VERSION (세만틱 버저닝)
 # ═══════════════════════════════════════════════════
 
-ENGINE_VERSION = "2.3.0"
+ENGINE_VERSION = "2.3.1"
 ENGINE_BUILD_DATE = "2026-10-04"
 
 # ═══════════════════════════════════════════════════
@@ -686,6 +693,12 @@ SPECIFIC FIXES NEEDED:
 ...
 ```
 
+## REPORT LENGTH (v2.3.1)
+- Report PROBLEMS only. Do NOT list items that were checked and found correct.
+- One line per issue. Quote at most a short phrase to locate it, never whole passages.
+- SPECIFIC FIXES NEEDED: the 25 most important fixes, highest impact first.
+- Keep the whole report under about 1,500 words.
+
 Be thorough but fair. A score of 8+ means ready for submission."""
 
 
@@ -1020,7 +1033,7 @@ MODEL_POLICY = {
         "name": "QA Check",
         "model": "claude-sonnet-5-5",
         "reason": "체크리스트 기반 검증 — Sonnet으로 충분",
-        "max_tokens": 16000,   # ★ v2.2.3 — 사고(thinking)+본문 합산 한도
+        "max_tokens": 64000,   # ★ v2.3.1 — 원고 전체(약 10만 자) 검토 시 사고량 증가로 16,000 부족 → 64,000
     },
 }
 

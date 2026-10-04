@@ -15,6 +15,21 @@ Character Tone Tags: formal / casual / street
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.4.0 (2026-10-04)
+  - 기능 추가: STAGE 6 — Final Revision (QA 자동 반영, 기계적 항목만)
+    · 신설 상수: STAGE_6_STYLE_SHEET (표기 통일 기준표 작성)
+                 STAGE_6_AUTO_FIX (허용 수정 F1~F9 / 금지 사항 명시)
+      F1 씬 헤딩 형식·장소명 통일  F2 용어 통일  F3 시각 표기  F4 대시
+      F5 (CONT'D) 보충  F6 기등장 인물 대문자 해제  F7 트랜지션  F8 레이아웃
+      F9 대조표 용어 형식
+    · 대사 표현·농담·설정·타임라인 수정은 반영하지 않음 (작가 판단 영역)
+    · 신설 함수: build_stage6_style_prompt() / build_stage6_fix_prompt()
+    · MODEL_POLICY["stage_6"] — Sonnet 5.5, max_tokens 32,000
+
+v2.3.2 (2026-10-04)
+  - (main.py) 완료 상태 표시 UI — 진행 배지·완료 배너·단계별 완료 표시
+  - prompt.py 룰 본문 변경 없음 — 버전 표기만 갱신
+
 v2.3.1 (2026-10-04)
   - 버그 수정: Stage 5 QA가 길이 한도(16,000)에 걸려 중단
     · 원인: v2.3.0부터 원고 전체(약 10만 자)를 검토하면서 사고량·리포트 분량 증가
@@ -84,7 +99,7 @@ v2.0
 # ENGINE VERSION (세만틱 버저닝)
 # ═══════════════════════════════════════════════════
 
-ENGINE_VERSION = "2.3.1"
+ENGINE_VERSION = "2.4.0"
 ENGINE_BUILD_DATE = "2026-10-04"
 
 # ═══════════════════════════════════════════════════
@@ -860,6 +875,106 @@ def build_stage5_prompt(region_id: str, char_map: dict = None, loc_map: dict = N
 
 
 # ═══════════════════════════════════════════════════
+# ★ v2.4.0 — STAGE 6: FINAL REVISION (QA 자동 반영 — 기계적 항목만)
+# ═══════════════════════════════════════════════════
+
+STAGE_6_STYLE_SHEET = """You are a script supervisor preparing a STYLE SHEET for a final mechanical cleanup pass.
+You receive (1) the QA report on the screenplay and (2) the list of every scene heading in order.
+
+Produce a concise STYLE SHEET in plain text (no JSON, no commentary) with these sections:
+
+## SLUGLINE FORMAT
+One canonical pattern, e.g. "INT. MABRY FUNERAL HOME — COLD ROOM — NIGHT"
+(em dash with spaces between every element).
+
+## CANONICAL LOCATION NAMES
+For every location written more than one way, one line:
+  canonical form  ←  variant, variant, ...
+Choose the form used most often. Merge synonyms the QA report flags (e.g. WOODSHOP / CARPENTRY SHOP).
+Sub-locations that are truly different places stay separate.
+
+## DUAL-LOCATION HEADINGS
+For each heading that combines two places with "/", give the two separate headings to use instead.
+
+## TERM UNIFICATION
+Only terms the QA report flags as inconsistent (objects, place nouns, institution names):
+  canonical  ←  variants
+If the LOCALIZATION MAP defines the term, the map form is canonical.
+
+## TIME NOTATION
+One rule for clock times in action and dialogue (e.g. "6 AM", "3:40 AM").
+
+## TRANSITIONS
+One rule for CUT TO: and similar transitions.
+
+Keep it under 600 words. Do not propose dialogue rewrites, jokes, plot or timeline changes."""
+
+
+STAGE_6_AUTO_FIX = """You are a script supervisor doing the FINAL MECHANICAL CLEANUP of a finished screenplay page.
+The writing is LOCKED. You only correct format and consistency, following the STYLE SHEET.
+
+## YOU MAY CHANGE (and only these)
+F1. Scene headings — rewrite to the canonical slugline format and canonical location names.
+    Split a dual-location heading into the two headings given in the style sheet.
+F2. Term unification — replace flagged variant terms with the canonical term (action AND dialogue),
+    changing nothing else in the sentence.
+F3. Clock-time notation — apply the TIME NOTATION rule.
+F4. Dashes — use an em dash "—" for interruptions and asides. Never "--".
+F5. (CONT'D) — add it to a character cue when the SAME character resumes speaking after an
+    action line within the same scene, with no other speaker in between.
+F6. Character caps in action lines — ALL CAPS only at a character's first appearance in the script.
+    Characters listed as ALREADY INTRODUCED are written in normal case in action lines
+    (e.g. "WALT stirs" → "Walt stirs"). Character cues above dialogue stay ALL CAPS.
+F7. Transitions — apply the TRANSITIONS rule; each transition on its own line.
+F8. Layout — every line flush-left. Blank line between elements. Character cue on its own line,
+    parenthetical on its own line, dialogue directly below.
+F9. Localization map terms — if a mapped term is written in a non-mapped form, use the mapped form.
+
+## YOU MUST NOT
+- Rewrite, reword, shorten or "improve" any dialogue or action beyond F1–F9.
+- Act on LANGUAGE or STORY suggestions in the QA report (phrasing, jokes, timeline, setups, new beats).
+- Add, remove, merge or reorder scenes, beats or lines.
+- Touch LOCKED LINES — they stay word-for-word.
+- Translate, explain, or comment.
+
+## OUTPUT
+Return the COMPLETE page with only the permitted corrections applied — from the first line to the last.
+Output ONLY the screenplay text."""
+
+
+def build_stage6_style_prompt(region_id: str, loc_map: dict = None) -> str:
+    """★ v2.4.0 — Stage 6 스타일 시트 생성용 시스템 프롬프트."""
+    region = _get_region(region_id)
+    parts = [STAGE_6_STYLE_SHEET, region["screenplay_format"]]
+    loc_section = build_localization_section(loc_map)
+    if loc_section:
+        parts.append(loc_section)
+    return "\n".join(parts)
+
+
+def build_stage6_fix_prompt(
+    region_id: str,
+    style_sheet: str,
+    qa_report: str = "",
+    loc_map: dict = None,
+) -> str:
+    """★ v2.4.0 — Stage 6 자동 반영(기계적 수정) 시스템 프롬프트."""
+    region = _get_region(region_id)
+    parts = [STAGE_6_AUTO_FIX, region["screenplay_format"]]
+    parts.append(f"\n## STYLE SHEET — FOLLOW EXACTLY\n{style_sheet.strip()}")
+    loc_section = build_localization_section(loc_map)
+    if loc_section:
+        parts.append(loc_section)
+    if qa_report:
+        parts.append(
+            "\n## QA REPORT — REFERENCE ONLY\n"
+            "Apply only the items that fall under F1–F9. Ignore every other suggestion.\n"
+            f"{qa_report.strip()}"
+        )
+    return "\n".join(parts)
+
+
+# ═══════════════════════════════════════════════════
 # INTERNAL HELPERS
 # ═══════════════════════════════════════════════════
 
@@ -1038,6 +1153,15 @@ MODEL_POLICY = {
 }
 
 # Cost estimates (per ~120 page screenplay)
+# ★ v2.4.0 — Stage 6 (기계적 수정이라 Sonnet으로 충분)
+MODEL_POLICY["stage_6"] = {
+    "name": "Final Revision",
+    "model": "claude-sonnet-5-5",
+    "reason": "QA 지적 중 서식·표기 통일만 자동 반영",
+    "max_tokens": 32000,
+    "style_max_tokens": 16000,
+}
+
 COST_ESTIMATES = {
     "full_pipeline": "약 $15–25 (전체 5단계)",
     "quick_mode": "약 $3–5 (Stage 1만, 초벌 번역)",

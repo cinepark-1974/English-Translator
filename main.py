@@ -13,6 +13,27 @@ Pipeline:
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.4.0 (2026-10-04)
+  - 기능 추가: STAGE 6 — Final Revision (QA 자동 반영 → 최종 원고)
+    ① normalize_layout() — 규칙 기반 정리(왼쪽 정렬 통일, -- → —, 빈 줄 정리) · 무료
+    ② 표기 통일 기준표 1회 작성 (장소명·씬 헤딩·용어·시각·트랜지션)
+    ③ 페이지별 기계적 수정 — 허용 F1~F9만, 대사 표현·설정 수정 금지
+       · 기등장 인물 목록을 페이지마다 전달 (대문자 재표기 해제)
+       · 검사 모드 "fix": 분량 90~115% · 씬 헤딩 유지 · 고정 대사 보존 확인
+       · v2.3.0 이어하기·자동 재시도 그대로 적용
+  - 최종 DOCX/TXT·검수·완료 배너가 Stage 6 결과 기준으로 동작
+  - 진행 배지 6단계(번역·포맷·문체·대사·QA·최종), 백업 진행도 N/6
+  - Stage 5를 다시 돌리면 Stage 6 결과·기준표 자동 초기화
+
+v2.3.2 (2026-10-04)
+  - 기능 개선: 완료 상태를 한눈에 표시
+    · PIPELINE 상단 진행 배지(번역·포맷·문체·대사·QA) + 배너
+      진행 중: "⏳ 진행 중 — N/5 단계 완료 · 다음 할 일"
+      완료:   "✅ 번역 완료 · 원작 씬 N개 전부 번역 · 최종 원고 N자 · QA 점수 · 판정"
+    · 각 단계 제목 옆 "✅ 완료" 표시
+    · FINAL OUTPUT 상단에도 완료 배너
+  - 신설: parse_qa_summary() / pipeline_status() / render_status_board() / stage_title()
+
 v2.3.1 (2026-10-04)
   - Stage 5 QA 길이 한도 초과 수정 — prompt.py MODEL_POLICY·STAGE_5 지침 변경
     (main.py 코드 변경 없음, 변경 기록만 추가)
@@ -95,6 +116,8 @@ from prompt import (
     build_stage3_prompt,
     build_stage4_prompt,
     build_stage5_prompt,
+    build_stage6_style_prompt,   # ★ v2.4.0
+    build_stage6_fix_prompt,     # ★ v2.4.0
 )
 
 # ─────────────────────────────────────────────
@@ -194,6 +217,47 @@ st.markdown("""
     background: #ddd;
     color: #999;
 }
+
+/* ── ★ v2.3.2 완료 배너 ── */
+.done-banner {
+    background: #E8F7EE;
+    border: 2px solid #2ecc71;
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    margin: 0.6rem 0 1rem 0;
+}
+.done-banner .big {
+    font-size: 1.45rem;
+    font-weight: 800;
+    color: #1E8449;
+    letter-spacing: 0.02em;
+}
+.done-banner .sub {
+    font-size: 0.92rem;
+    color: #333;
+    margin-top: 0.35rem;
+    line-height: 1.6;
+}
+.progress-banner {
+    background: #EEEEF6;
+    border: 2px solid #191970;
+    border-radius: 10px;
+    padding: 0.9rem 1.2rem;
+    margin: 0.6rem 0 1rem 0;
+}
+.progress-banner .big {
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: #191970;
+}
+.progress-banner .sub {
+    font-size: 0.88rem;
+    color: #444;
+    margin-top: 0.3rem;
+}
+.verdict-pass { color: #1E8449; font-weight: 700; }
+.verdict-minor { color: #B7950B; font-weight: 700; }
+.verdict-major { color: #C0392B; font-weight: 700; }
 
 /* ── Result box ── */
 .result-box {
@@ -340,6 +404,8 @@ _BACKUP_KEYS = [
     # 5단계 번역 결과
     "stage_1_result", "stage_2_result", "stage_3_result",
     "stage_4_result", "stage_5_result",
+    # ★ v2.4.0 — Stage 6 최종 수정본 · 스타일 시트
+    "stage_6_result", "stage_6_style_sheet", "partial_stage_6",
     # ★ v2.2 — 로컬라이징 매핑 (대조표 재업로드 없이 복구)
     "saved_char_map", "saved_char_tones", "saved_loc_map",
     # ★ v2.3.0 — 원고 식별·씬 수 · 단계별 이어하기 보관분
@@ -361,11 +427,11 @@ def export_session_backup() -> bytes:
             pages[key] = st.session_state.get(key, "")
     session["_paste_pages_data"] = pages
 
-    # 진행도 계산 (완료된 단계 수 / 5)
+    # 진행도 계산 (완료된 단계 수 / 6) — ★ v2.4.0 Stage 6 포함
     done = sum(
         1 for k in [
             "stage_1_result", "stage_2_result", "stage_3_result",
-            "stage_4_result", "stage_5_result",
+            "stage_4_result", "stage_5_result", "stage_6_result",
         ]
         if st.session_state.get(k)
     )
@@ -376,7 +442,7 @@ def export_session_backup() -> bytes:
             "build_date": ENGINE_BUILD_DATE,
             "saved_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
             "title": st.session_state.get("project_title", "") or "Untitled",
-            "stage_progress": f"{done}/5",
+            "stage_progress": f"{done}/6",
         },
         "session": session,
     }
@@ -412,7 +478,7 @@ def make_backup_filename(title: str, done_count: int) -> str:
         base = base.replace(ch, "_")
     base = base.replace(" ", "_")
     ts = datetime.now().strftime("%Y%m%d_%H%M")
-    return f"TranslateEngine_{base}_{done_count}of5_{ts}.json"
+    return f"TranslateEngine_{base}_{done_count}of6_{ts}.json"
 
 
 # ─────────────────────────────────────────────
@@ -1145,7 +1211,9 @@ _SCENE_HEAD_RE = re.compile(r'^\s*(?:S\s*#?\s*\d+\.?\s*)?(?:INT\.|EXT\.|INT\./EX
 # 출력 분량 하한 (입력 대비 글자 수 비율). 이보다 짧으면 장면이 빠졌다고 본다.
 #   한→영: 영어가 한국어보다 길어지는 것이 정상 (실측 약 1.9배)
 #   영→영: 리라이트로 다소 줄 수 있으나 절반 이하로 줄면 누락
-_MIN_RATIO = {"ko2en": 0.8, "en2en": 0.5}
+_MIN_RATIO = {"ko2en": 0.8, "en2en": 0.5, "fix": 0.9}
+# ★ v2.4.0 — 기계적 수정(Stage 6)은 분량이 거의 변하지 않아야 한다
+_MAX_RATIO = {"fix": 1.15}
 
 
 def count_scenes(text: str) -> int:
@@ -1158,8 +1226,11 @@ def count_scenes(text: str) -> int:
     return len(_SCENE_HEAD_RE.findall(text))
 
 
-def check_completeness(src: str, out: str, mode: str) -> str:
-    """페이지 단위 완결성 검사. 문제가 없으면 빈 문자열, 있으면 사유를 돌려준다."""
+def check_completeness(src: str, out: str, mode: str, locked: list = None) -> str:
+    """페이지 단위 완결성 검사. 문제가 없으면 빈 문자열, 있으면 사유를 돌려준다.
+
+    ★ v2.4.0 — locked: 고정 대사 영문 목록. 입력에 있던 고정 대사가 출력에서 사라지면 실패.
+    """
     src_nums = set(_SCENE_NUM_RE.findall(src or ""))
     if src_nums:
         out_nums = set(_SCENE_NUM_RE.findall(out or ""))
@@ -1180,7 +1251,54 @@ def check_completeness(src: str, out: str, mode: str) -> str:
     ratio = _MIN_RATIO.get(mode, 0.5)
     if src_len >= 1500 and out_len < src_len * ratio:
         return f"분량 부족 — 입력 {src_len:,}자 대비 출력 {out_len:,}자 (기준 {int(ratio*100)}% 미만)"
+    max_r = _MAX_RATIO.get(mode)
+    if max_r and src_len >= 1500 and out_len > src_len * max_r:
+        return f"변경 과다 — 입력 {src_len:,}자 대비 출력 {out_len:,}자 (기계적 수정 범위 초과)"
+
+    for en in locked or []:
+        probe = " ".join(re.split(r"\s*/\s*", str(en))[0].split()[:6]).strip()
+        if len(probe) >= 8:
+            pat = _flexible_pattern(probe)
+            if pat.search(src or "") and not pat.search(out or ""):
+                return f"고정 대사 훼손 — \"{probe}…\""
     return ""
+
+
+# ═══════════════════════════════════════════════════
+# ★ v2.4.0 — Stage 6 보조 함수
+# ═══════════════════════════════════════════════════
+
+def normalize_layout(text: str) -> str:
+    """규칙 기반 정리 (API 비용 없음).
+
+    - 모든 줄 왼쪽 정렬 (들여쓰기 방식 혼용 제거 — DOCX 서식은 생성 단계에서 입힌다)
+    - "--" → em dash "—"
+    - 3줄 이상 빈 줄 → 1줄
+    """
+    if not text:
+        return text
+    lines = [ln.strip() for ln in text.replace("\t", " ").split("\n")]
+    out = "\n".join(lines)
+    out = re.sub(r"[ ]*--[ ]*", " — ", out)   # 줄바꿈은 건드리지 않는다
+    out = re.sub(r"(?m)^ — ", "— ", out)
+    out = re.sub(r" — $", " —", out, flags=re.M)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip() + "\n"
+
+
+def scene_heading_list(text: str) -> list:
+    return [ln.strip() for ln in (text or "").split("\n") if _SCENE_HEAD_RE.match(ln)]
+
+
+def introduced_before(full_text: str, offset: int, char_map: dict) -> list:
+    """offset 이전에 이미 등장한 인물 영문명 목록 (대문자 해제 대상)."""
+    names = sorted({v for v in (char_map or {}).values() if _has_latin(v)}, key=len)
+    head = (full_text or "")[:offset]
+    found = []
+    for n in names:
+        if re.search(r"(?<![A-Za-z])" + re.escape(n) + r"(?![A-Za-z])", head, re.IGNORECASE):
+            found.append(n)
+    return found
 
 
 def make_client(key: str):
@@ -1208,7 +1326,9 @@ def run_stage_on_pages(client, pages: list, system_prompt: str,
                        progress_bar, status_area,
                        max_tokens: int = 32000,
                        stage_key: str = "",
-                       check_mode: str = "en2en") -> list:
+                       check_mode: str = "en2en",
+                       page_notes: list = None,
+                       locked: list = None) -> list:
     """Run an API-based stage on multiple pages with progress tracking.
 
     ★ v2.3.0
@@ -1246,7 +1366,8 @@ def run_stage_on_pages(client, pages: list, system_prompt: str,
                     client, page, system_prompt, model_id,
                     max_tokens=max_tokens,
                     page_info=f"Page {page_num} of {total}. Maintain consistency. "
-                              f"Process this page COMPLETELY, from its first line to its last line",
+                              f"Process this page COMPLETELY, from its first line to its last line"
+                              + (f". {page_notes[idx]}" if page_notes and idx < len(page_notes) and page_notes[idx] else ""),
                 )
             except anthropic.APIError as e:
                 error_msg = f"❌ API 오류 ({stage_name}, 페이지 {page_num}): {e}"
@@ -1257,7 +1378,7 @@ def run_stage_on_pages(client, pages: list, system_prompt: str,
                 last_problem = f"{type(e).__name__}: {e}"
                 continue
 
-            problem = check_completeness(page, out, check_mode)
+            problem = check_completeness(page, out, check_mode, locked=locked)
             if not problem:
                 result = out
                 break
@@ -1284,14 +1405,16 @@ def run_stage_on_pages(client, pages: list, system_prompt: str,
 
 
 _STAGE_KEYS = ["stage_1_result", "stage_2_result", "stage_3_result",
-               "stage_4_result", "stage_5_result"]
+               "stage_4_result", "stage_5_result", "stage_6_result"]
 
 
 def clear_downstream(stage_num: int):
     """★ v2.3.0 — 앞 단계를 다시 돌리면 그 뒤 단계 결과는 낡은 결과이므로 지운다."""
-    for n in range(stage_num + 1, 6):
+    for n in range(stage_num + 1, 7):   # ★ v2.4.0 Stage 6 포함
         st.session_state[f"stage_{n}_result"] = None
         st.session_state.pop(f"partial_stage_{n}", None)
+    if stage_num < 6:
+        st.session_state.pop("stage_6_style_sheet", None)
     for k in ("audit_report", "enforced_result", "enforce_log"):
         st.session_state.pop(k, None)
 
@@ -1733,7 +1856,7 @@ with st.expander("💾 프로젝트 세션 백업 (중단 시 복구용)", expan
         _done = sum(
             1 for _k in [
                 "stage_1_result", "stage_2_result", "stage_3_result",
-                "stage_4_result", "stage_5_result",
+                "stage_4_result", "stage_5_result", "stage_6_result",
             ]
             if st.session_state.get(_k)
         )
@@ -1741,7 +1864,7 @@ with st.expander("💾 프로젝트 세션 백업 (중단 시 복구용)", expan
         _backup_bytes = export_session_backup()
         _backup_fname = make_backup_filename(_backup_title, _done)
         st.download_button(
-            label=f"💾 JSON 다운로드 ({_done}/5 단계)",
+            label=f"💾 JSON 다운로드 ({_done}/6 단계)",
             data=_backup_bytes,
             file_name=_backup_fname,
             mime="application/json",
@@ -1897,9 +2020,100 @@ if source_text.strip():
         st.caption(f"🎬 원고 씬 수: {_sc}개 — 각 단계는 페이지마다 씬 누락을 검사합니다.")
 
 # ── Initialize session state for each stage ──
-for key in ["stage_1_result", "stage_2_result", "stage_3_result", "stage_4_result", "stage_5_result"]:
+for key in ["stage_1_result", "stage_2_result", "stage_3_result", "stage_4_result",
+            "stage_5_result", "stage_6_result"]:
     if key not in st.session_state:
         st.session_state[key] = None
+
+
+# ═══════════════════════════════════════════════════
+# ★ v2.3.2 — 진행 상황 · 완료 표시
+# ═══════════════════════════════════════════════════
+_STAGE_LABELS = {1: "번역", 2: "포맷", 3: "문체", 4: "대사", 5: "QA", 6: "최종"}
+_VERDICT_KO = {
+    "PASS": ("제출 가능", "verdict-pass"),
+    "MINOR REVISION": ("경미한 수정 권장", "verdict-minor"),
+    "MAJOR REVISION": ("대폭 수정 필요", "verdict-major"),
+}
+
+
+def parse_qa_summary(report: str) -> tuple:
+    """QA 리포트에서 점수와 판정을 뽑는다. 없으면 (None, None)."""
+    if not report:
+        return None, None
+    m_score = re.search(r"SCORE:\s*\[?(\d+(?:\.\d+)?)\]?\s*/\s*10", report, re.IGNORECASE)
+    m_rec = re.search(r"RECOMMENDATION:\s*\[?\s*(PASS|MINOR REVISION|MAJOR REVISION)",
+                      report, re.IGNORECASE)
+    score = m_score.group(1) if m_score else None
+    rec = m_rec.group(1).upper() if m_rec else None
+    return score, rec
+
+
+def pipeline_status() -> dict:
+    done = [n for n in range(1, 7) if st.session_state.get(f"stage_{n}_result")]
+    nxt = next((n for n in range(1, 7) if n not in done), None)
+    score, rec = parse_qa_summary(st.session_state.get("stage_5_result") or "")
+    src_scenes = st.session_state.get("source_scene_count") or 0
+    s1 = st.session_state.get("stage_1_result") or ""
+    tr_scenes = len(set(_SCENE_NUM_RE.findall(s1))) if s1 else 0
+    final = (st.session_state.get("stage_6_result")
+             or st.session_state.get("stage_4_result") or "")
+    return {"done": done, "next": nxt, "complete": len(done) == 6,
+            "score": score, "rec": rec, "src_scenes": src_scenes,
+            "tr_scenes": tr_scenes, "final_len": len(final)}
+
+
+def render_status_board(where: str = "top"):
+    """5단계 진행 배지 + 완료/진행 배너."""
+    stt = pipeline_status()
+    badges = "".join(
+        f'<span class="stage-badge {"stage-done" if n in stt["done"] else ("stage-active" if n == stt["next"] else "stage-pending")}">'
+        f'{"✓" if n in stt["done"] else n} {_STAGE_LABELS[n]}</span>'
+        for n in range(1, 7)
+    )
+
+    if stt["complete"]:
+        parts = ["6단계 모두 끝났습니다 — QA 자동 반영본이 최종 원고입니다"]
+        if stt["src_scenes"] and stt["tr_scenes"]:
+            if stt["tr_scenes"] >= stt["src_scenes"]:
+                parts.append(f"원작 씬 {stt['src_scenes']}개 전부 번역")
+            else:
+                parts.append(f"⚠️ 씬 {stt['tr_scenes']}/{stt['src_scenes']}")
+        if stt["final_len"]:
+            parts.append(f"최종 원고 {stt['final_len']:,}자")
+        verdict = ""
+        if stt["score"]:
+            parts.append(f"QA {stt['score']}/10 (자동 반영 전 기준)")
+        if stt["rec"] in _VERDICT_KO:
+            ko, css = _VERDICT_KO[stt["rec"]]
+            verdict = f' · 판정 <span class="{css}">{ko} ({stt["rec"]})</span>'
+        tail = ("<br>아래 FINAL OUTPUT에서 최종 DOCX를 받으세요." if where == "top"
+                else "<br>서식·표기 통일은 반영됐습니다. 대사 표현·설정 관련 QA 제안은 작가 판단 사항으로 남겨 두었습니다.")
+        st.markdown(
+            f'<div class="done-banner"><div class="big">✅ 번역 완료</div>'
+            f'<div class="sub">{" · ".join(parts)}{verdict}{tail}</div>'
+            f'<div style="margin-top:0.5rem">{badges}</div></div>',
+            unsafe_allow_html=True,
+        )
+    elif stt["done"]:
+        nxt = stt["next"]
+        st.markdown(
+            f'<div class="progress-banner"><div class="big">⏳ 진행 중 — {len(stt["done"])}/6 단계 완료</div>'
+            f'<div class="sub">다음 할 일: Stage {nxt} ({_STAGE_LABELS[nxt]}) 실행</div>'
+            f'<div style="margin-top:0.5rem">{badges}</div></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(f'<div style="margin:0.4rem 0 0.8rem 0">{badges}</div>', unsafe_allow_html=True)
+
+
+def stage_title(n: int, title: str):
+    """단계 제목 옆에 완료 표시."""
+    mark = " ✅ 완료" if st.session_state.get(f"stage_{n}_result") else ""
+    st.markdown(f"### {title}{mark}")
+
+
+render_status_board("top")
 
 # Helper: Show stage result with download
 def show_stage_result(stage_num: int, stage_name: str, result_key: str):
@@ -1942,7 +2156,7 @@ def upload_previous_result(stage_num: int, prev_stage_name: str, result_key: str
 # STAGE 1: Raw Translation
 # ═══════════════════════════════════════════════════
 st.markdown("---")
-st.markdown("### ① Raw Translation (Sonnet)")
+stage_title(1, "① Raw Translation (Sonnet)")
 st.caption("한국어 → 영어 직역. 충실한 번역이 목표.")
 
 if can_run:
@@ -1985,7 +2199,7 @@ show_stage_result(1, "Raw Translation", "stage_1_result")
 # STAGE 2: Format Conversion
 # ═══════════════════════════════════════════════════
 st.markdown("---")
-st.markdown("### ② Format Conversion (규칙 기반)")
+stage_title(2, "② Format Conversion (규칙 기반)")
 st.caption("S#번호 제거, 한국식 지시어 → 영어 표준 변환. API 호출 없음 (무료).")
 
 stage_2_input = st.session_state.get("stage_1_result")
@@ -2005,7 +2219,7 @@ show_stage_result(2, "Format", "stage_2_result")
 # STAGE 3: Voice Rewrite
 # ═══════════════════════════════════════════════════
 st.markdown("---")
-st.markdown("### ③ Voice Rewrite (Opus)")
+stage_title(3, "③ Voice Rewrite (Opus)")
 st.caption("번역체 제거, 네이티브 문체로 리라이트. 가장 시간과 비용이 많이 드는 단계.")
 
 stage_3_input = upload_previous_result(3, "Stage 2 Format", "stage_2_result")
@@ -2050,7 +2264,7 @@ show_stage_result(3, "Voice Rewrite", "stage_3_result")
 # STAGE 4: Dialogue Polish
 # ═══════════════════════════════════════════════════
 st.markdown("---")
-st.markdown("### ④ Dialogue Polish (Opus)")
+stage_title(4, "④ Dialogue Polish (Opus)")
 st.caption("대사 전문 폴리시. 캐릭터 톤 태그 반영.")
 
 stage_4_input = upload_previous_result(4, "Stage 3 Voice Rewrite", "stage_3_result")
@@ -2095,7 +2309,7 @@ show_stage_result(4, "Dialogue Polish", "stage_4_result")
 # STAGE 5: QA Check
 # ═══════════════════════════════════════════════════
 st.markdown("---")
-st.markdown("### ⑤ QA Check (Sonnet)")
+stage_title(5, "⑤ QA Check (Sonnet)")
 st.caption("최종 품질 검증. 포맷/일관성/언어/스토리 체크리스트.")
 
 stage_5_input = upload_previous_result(5, "Stage 4 Dialogue Polish", "stage_4_result")
@@ -2152,6 +2366,90 @@ if st.session_state.get("stage_5_result"):
 
 
 # ═══════════════════════════════════════════════════
+# ★ v2.4.0 — STAGE 6: Final Revision (QA 자동 반영)
+# ═══════════════════════════════════════════════════
+st.markdown("---")
+stage_title(6, "⑥ Final Revision — QA 자동 반영 (Sonnet)")
+st.caption(
+    "QA 지적 중 서식·표기 통일 항목만 자동으로 고쳐 최종 원고를 만듭니다 "
+    "(씬 헤딩·장소명·용어·시각 표기·대시·(CONT'D)·인물 대문자·레이아웃). "
+    "대사 표현·농담·설정·타임라인 제안은 반영하지 않습니다."
+)
+
+_s6_src = st.session_state.get("stage_4_result")
+_s6_qa = st.session_state.get("stage_5_result")
+if _s6_src and _s6_qa and api_key:
+    if st.button("▶️ Stage 6 실행 — 최종 원고 만들기", key="btn_stage6", use_container_width=True):
+        client = make_client(api_key)
+        region_id = selected_region["id"]
+        policy = MODEL_POLICY["stage_6"]
+        status_area = st.empty()
+        progress_bar = st.progress(0)
+
+        # ① 규칙 기반 정리 (무료)
+        base_text = normalize_layout(_s6_src)
+
+        # ② 표기 통일 기준표 (한 번만 만들고 재실행 시 재사용)
+        style_sheet = st.session_state.get("stage_6_style_sheet")
+        if not style_sheet:
+            status_area.markdown('<div class="progress-text">📐 표기 통일 기준표 작성 중...</div>',
+                                 unsafe_allow_html=True)
+            try:
+                heads = "\n".join(scene_heading_list(base_text))
+                style_sheet = call_api(
+                    client,
+                    f"## QA REPORT\n{_s6_qa}\n\n## SCENE HEADINGS (in order)\n{heads}",
+                    build_stage6_style_prompt(region_id, loc_map=loc_map),
+                    policy["model"],
+                    max_tokens=policy.get("style_max_tokens", 16000),
+                )
+                st.session_state["stage_6_style_sheet"] = style_sheet
+            except Exception as e:
+                st.error(f"❌ 기준표 작성 오류: {e}")
+                style_sheet = None
+
+        # ③ 페이지별 기계적 수정
+        if style_sheet:
+            system_prompt = build_stage6_fix_prompt(
+                region_id, style_sheet, qa_report=_s6_qa, loc_map=loc_map,
+            )
+            pages = split_into_pages(base_text)
+            notes, pos = [], 0
+            for pg in pages:
+                _at = base_text.find(pg[:200], pos)
+                _at = _at if _at >= 0 else pos
+                intro = introduced_before(base_text, _at, char_map)
+                notes.append(
+                    "ALREADY INTRODUCED (normal case in action lines): " + ", ".join(intro)
+                    if intro else "No character has been introduced before this page"
+                )
+                pos = _at + len(pg)
+            locked = [f.get("en") for f in (loc_map.get("fixed_lines") or []) if f.get("en")]
+
+            results = run_stage_on_pages(
+                client, pages, system_prompt, policy["model"],
+                "Stage 6: Final Revision", progress_bar, status_area,
+                max_tokens=policy["max_tokens"],
+                stage_key="stage_6", check_mode="fix",
+                page_notes=notes, locked=locked,
+            )
+            if results is not None:
+                st.session_state["stage_6_result"] = normalize_layout("\n\n".join(results))
+                for k in ("audit_report", "enforced_result", "enforce_log"):
+                    st.session_state.pop(k, None)
+                status_area.markdown('<div class="progress-text">✅ Stage 6 완료 — 최종 원고가 만들어졌습니다!</div>',
+                                     unsafe_allow_html=True)
+                st.rerun()
+elif st.session_state.get("stage_6_result") is None:
+    st.caption("⏳ Stage 5 (QA)를 먼저 완료하세요.")
+
+if st.session_state.get("stage_6_style_sheet"):
+    with st.expander("📐 표기 통일 기준표 (Stage 6이 따른 기준)", expanded=False):
+        st.text(st.session_state["stage_6_style_sheet"])
+show_stage_result(6, "Final Revision", "stage_6_result")
+
+
+# ═══════════════════════════════════════════════════
 # ★ v2.2 — LOCALIZATION AUDIT (용어집 잔존 검수)
 # ═══════════════════════════════════════════════════
 st.markdown("---")
@@ -2159,7 +2457,8 @@ st.markdown("### 🔎 LOCALIZATION AUDIT — 로컬라이징 검수")
 st.caption("대조표가 실제로 반영됐는지 기계적으로 대조합니다. 한국 지명·기관·통화 잔존을 잡아냅니다.")
 
 _audit_source = (
-    st.session_state.get("stage_4_result")
+    st.session_state.get("stage_6_result")   # ★ v2.4.0
+    or st.session_state.get("stage_4_result")
     or st.session_state.get("stage_3_result")
     or st.session_state.get("stage_2_result")
     or st.session_state.get("stage_1_result")
@@ -2249,7 +2548,7 @@ else:
             key="dl_enforced",
         )
         if st.button("↪️ 치환본을 최신 결과로 반영", key="btn_apply_enforced", use_container_width=True):
-            for _k in ["stage_4_result", "stage_3_result", "stage_2_result", "stage_1_result"]:
+            for _k in ["stage_6_result", "stage_4_result", "stage_3_result", "stage_2_result", "stage_1_result"]:
                 if st.session_state.get(_k):
                     st.session_state[_k] = st.session_state["enforced_result"]
                     break
@@ -2265,7 +2564,8 @@ else:
 
 # Determine the latest completed result for DOCX
 final_result = (
-    st.session_state.get("stage_4_result")
+    st.session_state.get("stage_6_result")   # ★ v2.4.0
+    or st.session_state.get("stage_4_result")
     or st.session_state.get("stage_3_result")
     or st.session_state.get("stage_2_result")
     or st.session_state.get("stage_1_result")
@@ -2285,8 +2585,14 @@ if final_result:
     else:
         base_filename = "Screenplay_translated"
 
+    # ★ v2.3.2 — 완료 배너
+    if pipeline_status()["complete"]:
+        render_status_board("final")
+
     # Show which stage this is from
-    if st.session_state.get("stage_4_result"):
+    if st.session_state.get("stage_6_result"):
+        st.caption("✅ Stage 6 (Final Revision — QA 자동 반영) 최종 원고 기준")
+    elif st.session_state.get("stage_4_result"):
         st.caption("✅ Stage 4 (Dialogue Polish) 결과 기준")
     elif st.session_state.get("stage_3_result"):
         st.caption("⚠️ Stage 3 (Voice Rewrite) 결과 기준 — Stage 4 미완료")
@@ -2329,6 +2635,8 @@ if final_result:
                      # ★ v2.3.0
                      "partial_stage_1", "partial_stage_3", "partial_stage_4",
                      "source_sig", "source_scene_count",
+                     # ★ v2.4.0
+                     "stage_6_result", "stage_6_style_sheet", "partial_stage_6",
                      "audit_report", "enforced_result", "enforce_log"]:
             if key in st.session_state:
                 del st.session_state[key]

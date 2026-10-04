@@ -15,6 +15,13 @@ Character Tone Tags: formal / casual / street
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.2.2 (2026-10-04)
+  - 버그 수정: Stage 1 API 404 오류 (model not_found)
+    · 원인: claude-sonnet-4-20250514 / claude-opus-4-20250514 가
+      2026-06-15 자로 퇴역(retired)되어 API가 요청을 거부
+    · 수정: MODEL_POLICY 모델 ID 교체
+      Stage 1·5 → claude-sonnet-5-5 / Stage 3·4 → claude-opus-5-5
+
 v2.2.1 (2026-10-04)
   - 버그 수정 (main.py): 톤 태그 수동 설정 화면 중복 key 오류
     (같은 영문명에 여러 한국명이 매핑된 대조표에서 발생)
@@ -50,7 +57,7 @@ v2.0
 # ENGINE VERSION (세만틱 버저닝)
 # ═══════════════════════════════════════════════════
 
-ENGINE_VERSION = "2.2.1"
+ENGINE_VERSION = "2.2.2"
 ENGINE_BUILD_DATE = "2026-10-04"
 
 # ═══════════════════════════════════════════════════
@@ -907,22 +914,22 @@ def _build_tone_section(char_tones: dict) -> str:
 MODEL_POLICY = {
     "stage_1": {
         "name": "Raw Translation",
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-5-5",
         "reason": "정확한 번역 — 속도+품질 균형",
     },
     "stage_3": {
         "name": "Voice Rewrite",
-        "model": "claude-opus-4-20250514",
+        "model": "claude-opus-5-5",
         "reason": "네이티브 문체 리라이팅 — 최고 품질 필수",
     },
     "stage_4": {
         "name": "Dialogue Polish",
-        "model": "claude-opus-4-20250514",
+        "model": "claude-opus-5-5",
         "reason": "대사 현지화 — 문화적 뉘앙스 필수",
     },
     "stage_5": {
         "name": "QA Check",
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-5-5",
         "reason": "체크리스트 기반 검증 — Sonnet으로 충분",
     },
 }

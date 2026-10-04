@@ -13,6 +13,13 @@ Pipeline:
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.2.1 (2026-10-04)
+  - 버그 수정: 톤 태그 수동 설정 화면 StreamlitDuplicateElementKey 오류
+    · 원인: 서로 다른 한국명이 같은 영문명으로 매핑될 때
+      (약칭→대사 헤드, 장로1·2·3 → ELDER 1 / 2 / 3 등)
+      같은 key의 선택 상자가 중복 생성됨
+    · 수정: 영문명 기준으로 중복을 걸러 한 번만 표시
+
 v2.2 (2026-09-16)
   - 로컬라이징 대조표(XLSX) 업로드 지원
     · 다중 시트 자동 인식 (주요 인물 / 조·단역 / 지명·기관명)
@@ -1318,7 +1325,15 @@ if not char_map and st.session_state.get("saved_char_map"):
 if char_map and not char_tones:
     with st.expander("🎭 캐릭터별 톤 태그 수동 설정 (선택)"):
         st.caption("CSV 3번째 열 없이 여기서 직접 설정할 수 있어요.")
+        # ★ v2.2.1 — 같은 영문명이 여러 한국명에 매핑된 경우(약칭→대사 헤드,
+        #   장로1·2·3 → ELDER 1 / 2 / 3 등) 선택 상자가 중복 생성되어
+        #   StreamlitDuplicateElementKey 오류가 났다. 톤 태그는 영문명 기준으로
+        #   저장되므로 영문명당 한 번만 표시한다.
+        _seen_tone_en = set()
         for ko, en in char_map.items():
+            if en in _seen_tone_en:
+                continue
+            _seen_tone_en.add(en)
             tone = st.selectbox(
                 f"{en}",
                 ["—", "formal", "casual", "street"],

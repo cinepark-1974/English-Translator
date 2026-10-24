@@ -13,6 +13,29 @@ Pipeline:
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.5.0 (2026-10-24)
+  - 기능 추가: 베트남 시장 대응 — 두 가지 작업 유형
+    A. 현지화: 한국 무대 원고 → 베트남 이식 (타겟 지역 Vietnam, 무대 보존 끔)
+    B. 무대 보존: 이미 베트남 무대인 한·베 공동제작 원고 (무대 보존 켬)
+  - SETTINGS — "공동제작 — 무대 보존" 체크박스 (자동으로 켜지지 않음, 작가 선택)
+  - 언어 표기 — (베트남어)·(영어)·· 베트남어 표기 감지 시
+    · 감지 안내 + 무대 보존 권장 안내
+    · Stage 1·3·4·6 페이지마다 언어 괄호 수 대조 (불일치 시 재시도 → 저장 안 함)
+    · 신설: count_lang_tags_ko() / count_lang_tags_en() / check_language_tags()
+  - 대조표에 없는 한글 인물명 사전 점검 — find_unmapped_korean_names()
+    · 무대 보존: 베트남 인물 원어 표기 입력 안내 (실행은 막지 않음)
+    · 베트남 현지화: 베트남 이름 후보 1회 생성 → 표에서 수정 → 대조표에 고정
+      (페이지마다 다른 이름이 붙는 문제 방지) — parse_vn_name_candidates()
+  - 메타 블록 제거 — strip_meta_blocks()
+    <LOCAL_VERIFY> <RATING_CHECK> <WRITER_NOTES_BEGIN> [MARKET_LENS_BEGIN]
+  - LOCALIZATION AUDIT — 무대 보존 모드에서 한국 지명·원화·문화어 패턴 점검 끔,
+    언어 괄호 씬별 대조표, 이름 성조 부호 혼용 점검 check_name_diacritics()
+  - Stage 2 — 화면 텍스트 "· Vietnamese" 잔존 → "(IN VIETNAMESE)" 정규식 치환
+  - DOCX — 대사와 같은 줄에 붙은 언어 괄호를 Parenthetical 줄로 분리
+  - FINAL OUTPUT — 언어 표기가 있는 원고에 첫 페이지 노트 1회 삽입
+    ("Unless otherwise noted, dialogue is spoken in …")
+  - 세션 백업 — 무대 보존 설정·베트남 이름 확정본 저장/복구
+
 v2.4.0 (2026-10-04)
   - 기능 추가: STAGE 6 — Final Revision (QA 자동 반영 → 최종 원고)
     ① normalize_layout() — 규칙 기반 정리(왼쪽 정렬 통일, -- → —, 빈 줄 정리) · 무료
@@ -118,6 +141,7 @@ from prompt import (
     build_stage5_prompt,
     build_stage6_style_prompt,   # ★ v2.4.0
     build_stage6_fix_prompt,     # ★ v2.4.0
+    build_vn_name_suggest_prompt,  # ★ v2.5.0
 )
 
 # ─────────────────────────────────────────────
@@ -411,6 +435,8 @@ _BACKUP_KEYS = [
     # ★ v2.3.0 — 원고 식별·씬 수 · 단계별 이어하기 보관분
     "source_sig", "source_scene_count",
     "partial_stage_1", "partial_stage_3", "partial_stage_4",
+    # ★ v2.5.0 — 무대 보존 설정 · 베트남 이름 확정본 · 원고 언어 표기 감지 여부
+    "saved_preserve_setting", "vn_name_overrides", "lang_tags_detected",
 ]
 
 
@@ -467,6 +493,11 @@ def import_session_backup(raw_bytes: bytes) -> dict:
     if isinstance(pages, dict):
         for key, val in pages.items():
             st.session_state[key] = val
+
+    # ★ v2.5.0 — 무대 보존 체크박스는 이미 화면에 그려진 위젯이라 지금 값을 바꿀 수 없다.
+    #   다음 실행에서 체크박스를 그리기 직전에 반영하도록 예약만 해 둔다.
+    if "saved_preserve_setting" in session_data:
+        st.session_state["_pending_preserve"] = bool(session_data.get("saved_preserve_setting"))
 
     return meta
 
@@ -903,8 +934,18 @@ _RESIDUE_PATTERNS = [
     (r"\bBlue\s*Gene\b|\bBluejeans?\b(?!\s*PICTURES)", "제작사 표기 오류 (BLUE JEANS PICTURES)"),  # ★ v2.3.0
 ]
 
+# ★ v2.5.0 — 무대 보존 모드에서는 한국 장면의 한국 요소가 정상이므로 끄는 패턴
+#   (한글 원문 잔존·통화 혼용·사건번호·제작사 표기는 어떤 모드에서도 점검)
+_RESIDUE_SKIP_IN_PRESERVE = {
+    "행정구역 로마자 (-gu/-dong/-si/-ro/-gil)",
+    "한국 지명 로마자",
+    "원화 표기",
+    "미현지화 문화어",
+}
 
-def check_glossary_residue(text: str, char_map: dict, loc_map: dict) -> dict:
+
+def check_glossary_residue(text: str, char_map: dict, loc_map: dict,
+                           preserve_setting: bool = False) -> dict:
     """번역 결과에 한국 고유 요소·미적용 매핑이 남아있는지 검수한다. (v2.2)
 
     반환: {
@@ -933,6 +974,8 @@ def check_glossary_residue(text: str, char_map: dict, loc_map: dict) -> dict:
                 result["missing"].append((ko, en, label))
 
     for pattern, label in _RESIDUE_PATTERNS:
+        if preserve_setting and label in _RESIDUE_SKIP_IN_PRESERVE:   # ★ v2.5.0
+            continue
         hits = re.findall(pattern, text)
         if hits:
             uniq = []
@@ -958,6 +1001,236 @@ def check_glossary_residue(text: str, char_map: dict, loc_map: dict) -> dict:
             result["corrections_left"].append((bad, good, n))
 
     return result
+
+
+# ═══════════════════════════════════════════════════
+# ★ v2.5.0 — 다국어 원고 · 무대 보존 · 베트남 이름 보조 함수
+# ═══════════════════════════════════════════════════
+
+# 원고(한국어)의 언어 이름 → 영문 언어 이름
+_LANG_NAMES = {
+    "베트남어": "Vietnamese", "영어": "English", "한국어": "Korean",
+    "인도네시아어": "Indonesian", "자바어": "Javanese", "일본어": "Japanese",
+    "중국어": "Chinese", "광둥어": "Cantonese", "태국어": "Thai",
+    "프랑스어": "French", "스페인어": "Spanish", "러시아어": "Russian",
+}
+_LANG_EN_CANON = {v.lower(): v for v in _LANG_NAMES.values()}
+
+# 한국어 원고: (베트남어) (베트남어, 낮게) [문자 · 베트남어] INSERT — … · 베트남어
+_KO_LANG_RE = re.compile(
+    r"(?:\(|·)[ \t]*(" + "|".join(sorted(_LANG_NAMES, key=len, reverse=True)) + r")(?:로)?"
+    r"(?=[ \t]*[,)\]]|[ \t]*$)",
+    re.MULTILINE,
+)
+# 영문 원고: (in Vietnamese) (in Vietnamese, quietly) (IN VIETNAMESE) (Vietnamese) (speaking Vietnamese)
+_EN_LANG_RE = re.compile(
+    r"\([ \t]*(?:in[ \t]+|speaking[ \t]+)?(" + "|".join(_LANG_NAMES.values()) + r")\b(?=[ \t]*[),;])",
+    re.IGNORECASE,
+)
+
+_SCENE_SPLIT_RE = re.compile(
+    r'^[ \t]*(?:S[ \t]*#[ \t]*\d+|INT\.|EXT\.|INT\./EXT\.|EXT\./INT\.|I/E\.)',
+    re.MULTILINE | re.IGNORECASE,
+)
+
+_META_BLOCKS = [
+    (r"<LOCAL_VERIFY>.*?</LOCAL_VERIFY>", "LOCAL_VERIFY (고증 체크리스트)"),
+    (r"<RATING_CHECK>.*?</RATING_CHECK>", "RATING_CHECK (등급 점검)"),
+    (r"<WRITER_NOTES_BEGIN>.*?<WRITER_NOTES_END>", "WRITER_NOTES (작가 노트)"),
+    (r"\[MARKET_LENS_BEGIN\].*?\[MARKET_LENS_END\]", "MARKET_LENS (시장 렌즈)"),
+]
+
+
+def count_lang_tags_ko(text: str) -> dict:
+    """한국어 원고의 대사·화면 텍스트 언어 표기를 언어별로 센다. {"Vietnamese": 2, ...}"""
+    out = {}
+    for ko in _KO_LANG_RE.findall(text or ""):
+        en = _LANG_NAMES[ko]
+        out[en] = out.get(en, 0) + 1
+    return out
+
+
+def count_lang_tags_en(text: str) -> dict:
+    """영문 원고의 언어 괄호를 언어별로 센다. 표기 변형(대소문자·in 생략)도 같은 것으로 센다."""
+    out = {}
+    for name in _EN_LANG_RE.findall(text or ""):
+        en = _LANG_EN_CANON.get(name.lower(), name.title())
+        out[en] = out.get(en, 0) + 1
+    return out
+
+
+def lang_tag_problem(src: str, out: str, mode: str) -> str:
+    """페이지 단위 언어 괄호 수 대조. 문제가 없으면 빈 문자열."""
+    a = count_lang_tags_ko(src) if mode == "ko2en" else count_lang_tags_en(src)
+    b = count_lang_tags_en(out)
+    if a == b:
+        return ""
+    diffs = [f"{lang} 입력 {a.get(lang, 0)} / 출력 {b.get(lang, 0)}"
+             for lang in sorted(set(a) | set(b)) if a.get(lang, 0) != b.get(lang, 0)]
+    return "언어 표기 불일치 — " + " · ".join(diffs)
+
+
+def _split_scenes(text: str) -> list:
+    """씬 헤딩(S#n / INT. / EXT.) 기준으로 (헤딩, 본문) 목록을 만든다. 첫 헤딩 앞부분은 제외."""
+    text = text or ""
+    starts = [m.start() for m in _SCENE_SPLIT_RE.finditer(text)]
+    scenes = []
+    for i, s in enumerate(starts):
+        e = starts[i + 1] if i + 1 < len(starts) else len(text)
+        block = text[s:e]
+        head = block.split("\n", 1)[0].strip()
+        scenes.append((head, block))
+    return scenes
+
+
+def check_language_tags(src: str, out: str, src_is_korean: bool = True) -> dict:
+    """원고와 번역 결과의 언어 괄호를 언어별·씬별로 대조한다. 자동 수정은 하지 않는다.
+
+    반환: {
+        "totals": [(언어, 원고 수, 결과 수)],
+        "scenes": [(씬 순번, 결과 씬 헤딩, 언어, 원고 수, 결과 수)],   # 불일치 씬만
+        "scene_compare": True/False,   # 씬 수가 같아 씬별 대조를 했는지
+        "ok": True/False,
+    }
+    """
+    counter_src = count_lang_tags_ko if src_is_korean else count_lang_tags_en
+    a, b = counter_src(src), count_lang_tags_en(out)
+    totals = [(lang, a.get(lang, 0), b.get(lang, 0)) for lang in sorted(set(a) | set(b))]
+    res = {"totals": totals, "scenes": [], "scene_compare": False,
+           "ok": all(x == y for _, x, y in totals)}
+
+    s_src, s_out = _split_scenes(src), _split_scenes(out)
+    if s_src and len(s_src) == len(s_out):
+        res["scene_compare"] = True
+        for i, ((_, bs), (ho, bo)) in enumerate(zip(s_src, s_out), start=1):
+            ca, cb = counter_src(bs), count_lang_tags_en(bo)
+            for lang in sorted(set(ca) | set(cb)):
+                if ca.get(lang, 0) != cb.get(lang, 0):
+                    res["scenes"].append((i, ho, lang, ca.get(lang, 0), cb.get(lang, 0)))
+    return res
+
+
+def strip_meta_blocks(text: str) -> tuple:
+    """Writer 엔진 메타 블록(고증·등급·작가 노트·시장 렌즈)을 원고에서 제거한다.
+
+    반환: (정리된 원고, [(블록 이름, 개수)])  — 블록이 없으면 원고를 그대로 돌려준다.
+    """
+    if not text:
+        return text, []
+    removed = []
+    for pattern, label in _META_BLOCKS:
+        text, n = re.subn(pattern, "", text, flags=re.DOTALL)
+        if n:
+            removed.append((label, n))
+    if removed:
+        text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
+    return text, removed
+
+
+_KO_CUE_RE = re.compile(
+    r'^[ \t]*([가-힣][가-힣0-9]{0,9})[ \t]*(?:\([^)\n]*\))?[ \t]*(?:\t|[:：])',
+    re.MULTILINE,
+)
+
+
+def find_unmapped_korean_names(text: str, char_map: dict, loc_map: dict = None) -> list:
+    """대사 큐(이름 + 탭 / 이름 :)로 쓰인 한글 이름 중 대조표에 없는 것. [(이름, 대사 수)]"""
+    known = dict(char_map or {})
+    known.update((loc_map or {}).get("extras") or {})
+    counts = {}
+    for name in _KO_CUE_RE.findall(text or ""):
+        if name in known or _match_char_name(name, known):
+            continue
+        counts[name] = counts.get(name, 0) + 1
+    return sorted(counts.items(), key=lambda x: (-x[1], x[0]))
+
+
+def collect_name_context(text: str, names: list, per_name: int = 3) -> dict:
+    """이름 후보를 만들 때 함께 보낼 대사 몇 줄을 모은다. {이름: [줄, ...]}"""
+    ctx = {n: [] for n in names}
+    for line in (text or "").split("\n"):
+        m = _KO_CUE_RE.match(line)
+        if m and m.group(1) in ctx and len(ctx[m.group(1)]) < per_name:
+            ctx[m.group(1)].append(re.sub(r"\s+", " ", line.strip())[:160])
+    return ctx
+
+
+def fold_ascii(s: str) -> str:
+    """성조 부호를 뗀 형태 (Tuấn → Tuan, Đà → Da)."""
+    import unicodedata
+    s = (s or "").replace("đ", "d").replace("Đ", "D")
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+
+def parse_vn_name_candidates(raw: str, names: list = None) -> list:
+    """이름 후보 응답 '한국이름 | CUE | 풀네임 | 메모' 를 표 행으로 바꾼다."""
+    rows, seen = [], set()
+    wanted = set(names or [])
+    for line in (raw or "").split("\n"):
+        line = line.strip().strip("`").strip()
+        if "|" not in line:
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        ko = cells[0]
+        if not _HANGUL_RE.search(ko) or ko in seen:
+            continue        # 머리글·설명 줄 제외
+        if wanted and ko not in wanted:
+            continue
+        cue = re.sub(r"[^A-Z0-9 .'\-]", "", fold_ascii(cells[1]).upper()).strip()
+        cue = re.sub(r"\s+", " ", cue)
+        if not cue:
+            continue
+        seen.add(ko)
+        rows.append({
+            "한국이름": ko,
+            "영문 큐": cue,
+            "베트남 풀네임": cells[2] if len(cells) > 2 and cells[2] not in {"-", "—"} else "",
+            "메모": cells[3] if len(cells) > 3 else "",
+        })
+    return rows
+
+
+def check_name_diacritics(text: str, char_map: dict) -> list:
+    """대조표 이름과 성조 부호만 다른 표기가 섞여 있는지 찾는다. [(대조표 표기, [다른 표기, ...])]"""
+    if not text or not char_map:
+        return []
+    forms = {}
+    for w in re.findall(r"[^\W\d_]+", text):
+        forms.setdefault(fold_ascii(w).lower(), set()).add(w)
+    report = []
+    for en in sorted({v for v in char_map.values() if _has_latin(v)}):
+        variants = set()
+        for word in re.findall(r"[^\W\d_]+", en):
+            if len(word) < 3:
+                continue
+            for f in forms.get(fold_ascii(word).lower(), ()):
+                if f.lower() != word.lower():
+                    variants.add(f)
+        if variants:
+            report.append((en, sorted(variants)))
+    return report
+
+
+_LANG_NOTE_HEAD = "NOTE: Unless otherwise noted, dialogue is spoken in"
+
+
+def base_dialogue_language(region_id: str, preserve_setting: bool) -> str:
+    """괄호 없는 대사의 언어. 영어권 이식(US/UK)이면 노트가 필요 없으므로 빈 문자열."""
+    if preserve_setting:
+        return "Korean"
+    return {"vn": "Vietnamese", "id": "Indonesian"}.get(region_id, "")
+
+
+def apply_language_note(text: str, base_lang: str, subtitled: bool = True) -> str:
+    """첫 페이지 언어 노트를 1회 넣는다 (이미 있으면 그대로)."""
+    if not text or not base_lang or text.lstrip().startswith(_LANG_NOTE_HEAD):
+        return text
+    note = f"{_LANG_NOTE_HEAD} {base_lang}."
+    if subtitled:
+        note += " Non-English dialogue is subtitled."
+    return note + "\n\n" + text
 
 
 def parse_character_map(uploaded_file) -> dict:
@@ -1120,6 +1393,16 @@ def apply_format_conversion(text: str, region_id: str) -> str:
     for pattern, replacement in marker_map.items():
         result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
 
+    # ── ★ v2.5.0 화면 텍스트 언어 표기 잔존: "· 베트남어" / "· Vietnamese" → "(IN VIETNAMESE)" ──
+    #    (가운뎃점 + 언어 이름 조합에만 반응하므로 일반 원고에는 영향 없음)
+    for _ko, _en in _LANG_NAMES.items():
+        result = re.sub(
+            rf"[ \t]*·[ \t]*(?:{_ko}|{_en})(?![^\W\d_])",
+            f" (IN {_en.upper()})",
+            result,
+            flags=re.IGNORECASE,
+        )
+
     # ── Dash standardization ──
     if region_id == 'us':
         # US: em dash in scene headings
@@ -1226,11 +1509,18 @@ def count_scenes(text: str) -> int:
     return len(_SCENE_HEAD_RE.findall(text))
 
 
-def check_completeness(src: str, out: str, mode: str, locked: list = None) -> str:
+def check_completeness(src: str, out: str, mode: str, locked: list = None,
+                       lang_check: bool = False) -> str:
     """페이지 단위 완결성 검사. 문제가 없으면 빈 문자열, 있으면 사유를 돌려준다.
 
     ★ v2.4.0 — locked: 고정 대사 영문 목록. 입력에 있던 고정 대사가 출력에서 사라지면 실패.
+    ★ v2.5.0 — lang_check: 언어 괄호((in Vietnamese) 등) 수가 입력과 다르면 실패.
     """
+    if lang_check:
+        problem = lang_tag_problem(src, out, mode)
+        if problem:
+            return problem
+
     src_nums = set(_SCENE_NUM_RE.findall(src or ""))
     if src_nums:
         out_nums = set(_SCENE_NUM_RE.findall(out or ""))
@@ -1328,7 +1618,8 @@ def run_stage_on_pages(client, pages: list, system_prompt: str,
                        stage_key: str = "",
                        check_mode: str = "en2en",
                        page_notes: list = None,
-                       locked: list = None) -> list:
+                       locked: list = None,
+                       lang_check: bool = False) -> list:
     """Run an API-based stage on multiple pages with progress tracking.
 
     ★ v2.3.0
@@ -1378,7 +1669,8 @@ def run_stage_on_pages(client, pages: list, system_prompt: str,
                 last_problem = f"{type(e).__name__}: {e}"
                 continue
 
-            problem = check_completeness(page, out, check_mode, locked=locked)
+            problem = check_completeness(page, out, check_mode, locked=locked,
+                                         lang_check=lang_check)
             if not problem:
                 result = out
                 break
@@ -1514,6 +1806,9 @@ def generate_docx(text: str) -> bytes:
     )
     CHAR_RE = re.compile(r'^([A-Z][A-Z0-9\s\.\-\']+?)(\s*\(.*\))?\s*$')
     PAREN_RE = re.compile(r'^\(.*\)\s*$')
+    # ★ v2.5.0 — "(in Vietnamese) Say it again." 처럼 언어 괄호가 대사 줄에 붙은 경우
+    INLINE_LANG_RE = re.compile(
+        r'^(\((?:in|speaking)\s+[A-Za-z]+[^)]*\))\s+(\S.*)$', re.IGNORECASE)
 
     lines = text.split('\n')
     i = 0
@@ -1563,7 +1858,11 @@ def generate_docx(text: str) -> bytes:
                                 peek += 1
                             if peek < len(lines) and lines[peek].strip():
                                 break
-                        if PAREN_RE.match(dl):
+                        _inl = INLINE_LANG_RE.match(dl)
+                        if _inl:
+                            doc.add_paragraph(_inl.group(1), style='Parenthetical')
+                            doc.add_paragraph(_inl.group(2), style='Dialogue')
+                        elif PAREN_RE.match(dl):
                             doc.add_paragraph(dl, style='Parenthetical')
                         else:
                             doc.add_paragraph(dl, style='Dialogue')
@@ -1639,6 +1938,29 @@ with col_right:
     selected_style = STYLE_PRESETS[style_choice]
     st.caption(f"📌 {selected_style['desc']}")
 
+# ── ★ v2.5.0 무대 보존 (공동제작) ──
+# 백업 복원 직후에는 체크박스를 그리기 전에 저장된 값을 반영한다
+if "_pending_preserve" in st.session_state:
+    st.session_state["preserve_setting_widget"] = st.session_state.pop("_pending_preserve")
+
+preserve_setting = st.checkbox(
+    "🤝 공동제작 — 무대 보존 (지명·기관·문화 요소를 옮기지 않음)",
+    key="preserve_setting_widget",
+    help=(
+        "끔(기본): 원고를 타겟 지역으로 이식합니다. 예) 한국 원고 + Vietnam → 서울이 호찌민으로, "
+        "인물이 베트남 인물로 바뀝니다.\n\n"
+        "켬: 원고의 무대를 그대로 두고 언어만 영어로 바꿉니다. 예) 이미 호찌민이 무대인 "
+        "한·베 공동제작 원고 → 호찌민은 호찌민, 서울 장면은 서울로 남습니다."
+    ),
+)
+st.session_state["saved_preserve_setting"] = preserve_setting
+if preserve_setting:
+    st.caption("📌 무대 보존 — 장소·기관·통화·의례를 원고 그대로 두고 영어로만 옮깁니다. "
+               "타겟 지역은 '어떤 영어로 쓸지'만 정합니다.")
+elif selected_region["id"] == "vn":
+    st.caption("📌 베트남 현지화 — 한국 무대·인물·문화를 베트남으로 옮깁니다. "
+               "이미 베트남이 무대인 원고라면 위 무대 보존을 켜 주세요.")
+
 # ── Custom Instructions ──
 custom_instructions = st.text_area(
     "✏️ 추가 번역 지시사항 (선택)",
@@ -1654,6 +1976,7 @@ st.markdown(
     'Stage 3: Voice Rewrite → Opus (문체 리라이트)<br>'
     'Stage 4: Dialogue Polish → Opus (대사 폴리시)<br>'
     'Stage 5: QA Check → Sonnet (품질 검증)<br>'
+    'Stage 6: Final Revision → Sonnet (QA 자동 반영 · 최종 원고)<br>'
     '<br>💡 각 단계별로 독립 실행 · 결과 저장 · 이어서 진행 가능</div>',
     unsafe_allow_html=True
 )
@@ -1773,6 +2096,20 @@ if not char_map and st.session_state.get("saved_char_map"):
     st.caption(
         f"↩️ 이전 세션 매핑 사용 중 — 인물 {len(char_map)}건 · 기타 {count_loc_entries(loc_map)}건"
     )
+
+# ★ v2.5.0 — 확정한 베트남 이름(현지화 모드)을 인물 매핑에 더한다.
+#   업로드한 대조표에 이미 있는 이름은 대조표가 우선한다.
+_vn_over = st.session_state.get("vn_name_overrides") or {}
+if _vn_over:
+    char_map = dict(char_map)   # 세션 보관본을 직접 바꾸지 않도록 복사
+    _added = 0
+    for _ko, _en in _vn_over.items():
+        if _ko and _en and _ko not in char_map:
+            char_map[_ko] = _en
+            _added += 1
+    if _added:
+        st.caption(f"🇻🇳 확정한 베트남 이름 {_added}건을 인물 매핑에 함께 적용 중입니다 "
+                   "(PIPELINE의 '대조표에 없는 인물 이름'에서 수정·해제할 수 있습니다).")
 
 # Manual tone assignment for unmapped characters
 if char_map and not char_tones:
@@ -1990,6 +2327,17 @@ else:
     if source_text:
         st.caption(f"총 {len(source_text):,}자 입력됨")
 
+# ★ v2.5.0 — Writer 엔진 메타 블록 안전망 (원고 본문이 아니므로 번역 전에 뗀다)
+source_text, _meta_removed = strip_meta_blocks(source_text)
+if _meta_removed:
+    st.info("🧹 원고 본문이 아닌 메타 블록을 번역 대상에서 제외했습니다 — "
+            + " · ".join(f"{label} {n}개" for label, n in _meta_removed))
+
+# ★ v2.5.0 — 원고의 대사·화면 텍스트 언어 표기 감지 (정규식으로만 판단)
+_lang_counts_src = count_lang_tags_ko(source_text)
+if source_text.strip():
+    st.session_state["lang_tags_detected"] = bool(_lang_counts_src)
+
 
 # ═══════════════════════════════════════════════════
 # STEP-BY-STEP PIPELINE
@@ -2018,6 +2366,113 @@ if source_text.strip():
     _sc = count_scenes(source_text)
     if _sc:
         st.caption(f"🎬 원고 씬 수: {_sc}개 — 각 단계는 페이지마다 씬 누락을 검사합니다.")
+
+
+# ═══════════════════════════════════════════════════
+# ★ v2.5.0 — 다국어 표기 · 이름 사전 점검
+# ═══════════════════════════════════════════════════
+def is_multilingual(stage_input: str = "") -> bool:
+    """원고(한국어) 또는 이번 단계 입력(영문)에 언어 표기가 있으면 True."""
+    if source_text.strip():
+        src_flag = bool(_lang_counts_src)
+    else:
+        src_flag = bool(st.session_state.get("lang_tags_detected"))
+    return src_flag or bool(count_lang_tags_en(stage_input or ""))
+
+
+if _lang_counts_src:
+    st.info(
+        "🌐 대사·화면 텍스트 언어 표기가 감지되었습니다 — "
+        + " · ".join(f"{lang} {n}곳" for lang, n in sorted(_lang_counts_src.items()))
+        + ". 각 단계가 언어 괄호((in Vietnamese) 등)를 하나씩 그대로 옮겼는지 페이지마다 대조합니다."
+    )
+    if _lang_counts_src.get("Vietnamese") and not preserve_setting:
+        st.warning(
+            "베트남어 표기가 감지되었습니다. 무대 보존 모드를 권장합니다. "
+            "베트남이 이미 무대인 공동제작 원고라면 SETTINGS의 '공동제작 — 무대 보존'을 켜 주세요. "
+            "지금 상태(끔)로 실행하면 무대가 타겟 지역으로 옮겨집니다."
+        )
+
+_unmapped_names = []
+if source_text.strip() and (preserve_setting or selected_region["id"] == "vn"):
+    _unmapped_names = find_unmapped_korean_names(source_text, char_map, loc_map)
+
+if _unmapped_names:
+    _vn_relocate = (selected_region["id"] == "vn" and not preserve_setting)
+    with st.expander(f"🔤 대조표에 없는 인물 이름 {len(_unmapped_names)}명 — 실행 전 확인 권장",
+                     expanded=True):
+        st.caption("대사 큐에 쓰인 한글 이름 중 대조표에 없는 이름입니다: "
+                   + ", ".join(f"{n}({c})" for n, c in _unmapped_names[:40]))
+        if not _vn_relocate:
+            st.warning(
+                "베트남 인물이면 대조표에 원어 표기를 넣어 주세요 (예: 린,LINH / 투안,TUAN). "
+                "한글 음차는 원어로 정확히 되돌릴 수 없어서(린 → Linh일 수도, Lin일 수도 있음) "
+                "대조표가 없으면 엔진이 가장 흔한 표기를 고릅니다. 한국인 인물은 그대로 두셔도 됩니다."
+            )
+        else:
+            st.markdown(
+                "**베트남 현지화** — 한국 인물이 베트남 인물이 됩니다. 페이지마다 다른 이름이 붙지 않도록 "
+                "실행 전에 이름을 한 번 정해 대조표로 고정하는 것을 권장합니다."
+            )
+            if api_key and st.button("🇻🇳 베트남 이름 후보 만들기 (Sonnet 1회 호출)",
+                                     key="btn_vn_names", use_container_width=True):
+                _names = [n for n, _ in _unmapped_names[:60]]
+                _ctx = collect_name_context(source_text, _names)
+                _req = "\n\n".join(
+                    f"{n}\n" + "\n".join(f"  {ln}" for ln in _ctx.get(n, [])) for n in _names
+                )
+                try:
+                    _raw = call_api(
+                        make_client(api_key), _req, build_vn_name_suggest_prompt(),
+                        MODEL_POLICY["stage_1"]["model"], max_tokens=8000,
+                    )
+                    _rows = parse_vn_name_candidates(_raw, _names)
+                    if _rows:
+                        st.session_state["vn_name_candidates"] = _rows
+                    else:
+                        st.error("이름 후보를 읽지 못했습니다. 다시 실행해 주세요.")
+                except Exception as e:
+                    st.error(f"❌ 이름 후보 생성 오류: {e}")
+
+        _cands = st.session_state.get("vn_name_candidates")
+        if _vn_relocate and _cands:
+            import pandas as pd
+            st.caption("영문 큐(대사 헤드에 쓰일 이름)를 직접 고칠 수 있습니다. "
+                       "확정하면 대조표처럼 Stage 1~6에 적용됩니다.")
+            _edited = st.data_editor(
+                pd.DataFrame(_cands), key="vn_name_editor",
+                hide_index=True, num_rows="fixed",
+                disabled=["한국이름"],
+            )
+            _rows_now = _edited.to_dict("records")
+            _cue_list = [str(r.get("영문 큐") or "").strip().upper() for r in _rows_now]
+            _dups = sorted({c for c in _cue_list if c and _cue_list.count(c) > 1})
+            if _dups:
+                st.warning("같은 영문 큐가 두 인물에 붙어 있습니다: " + ", ".join(_dups))
+            cb1, cb2 = st.columns(2)
+            with cb1:
+                if st.button("✅ 이 이름으로 확정 (대조표에 추가)", key="btn_vn_names_apply",
+                             use_container_width=True):
+                    st.session_state["vn_name_overrides"] = {
+                        str(r["한국이름"]).strip(): str(r.get("영문 큐") or "").strip().upper()
+                        for r in _rows_now if str(r.get("영문 큐") or "").strip()
+                    }
+                    st.rerun()
+            with cb2:
+                _csv = io.StringIO()
+                _w = csv.writer(_csv)
+                _w.writerow(["한국이름", "영어이름", "톤태그"])
+                for r in _rows_now:
+                    _w.writerow([r.get("한국이름"), str(r.get("영문 큐") or "").upper(), ""])
+                st.download_button("💾 대조표 CSV로 저장 (다음 작업에 재사용)",
+                                   data=_csv.getvalue().encode("utf-8-sig"),
+                                   file_name="vn_character_map.csv", mime="text/csv",
+                                   use_container_width=True, key="dl_vn_names")
+
+if st.session_state.get("vn_name_overrides"):
+    if st.button("↩️ 확정한 베트남 이름 해제", key="btn_vn_names_clear"):
+        st.session_state.pop("vn_name_overrides", None)
+        st.rerun()
 
 # ── Initialize session state for each stage ──
 for key in ["stage_1_result", "stage_2_result", "stage_3_result", "stage_4_result",
@@ -2164,12 +2619,15 @@ if can_run:
         client = make_client(api_key)
         region_id = selected_region["id"]
 
+        _ml = is_multilingual()   # ★ v2.5.0
         system_prompt = build_stage1_prompt(
             region_id=region_id,
             char_map=char_map,
             style_prompt=selected_style["prompt"],
             custom_instructions=custom_instructions,
             loc_map=loc_map,
+            preserve_setting=preserve_setting,   # ★ v2.5.0
+            multilingual=_ml,                    # ★ v2.5.0
         )
         model_id = MODEL_POLICY["stage_1"]["model"]
         pages = split_into_pages(source_text)
@@ -2182,6 +2640,7 @@ if can_run:
             "Stage 1: Raw Translation", progress_bar, status_area,
             max_tokens=MODEL_POLICY["stage_1"]["max_tokens"],
             stage_key="stage_1", check_mode="ko2en",
+            lang_check=_ml,                      # ★ v2.5.0
         )
 
         if results is not None:
@@ -2228,6 +2687,7 @@ if stage_3_input and api_key:
         client = make_client(api_key)
         region_id = selected_region["id"]
 
+        _ml = is_multilingual(stage_3_input)   # ★ v2.5.0
         system_prompt = build_stage3_prompt(
             region_id=region_id,
             char_map=char_map,
@@ -2235,6 +2695,8 @@ if stage_3_input and api_key:
             style_prompt=selected_style["prompt"],
             custom_instructions=custom_instructions,
             loc_map=loc_map,
+            preserve_setting=preserve_setting,   # ★ v2.5.0
+            multilingual=_ml,                    # ★ v2.5.0
         )
         model_id = MODEL_POLICY["stage_3"]["model"]
         pages = split_into_pages(stage_3_input)
@@ -2247,6 +2709,7 @@ if stage_3_input and api_key:
             "Stage 3: Voice Rewrite", progress_bar, status_area,
             max_tokens=MODEL_POLICY["stage_3"]["max_tokens"],
             stage_key="stage_3", check_mode="en2en",
+            lang_check=_ml,                      # ★ v2.5.0
         )
 
         if results is not None:
@@ -2273,6 +2736,7 @@ if stage_4_input and api_key:
         client = make_client(api_key)
         region_id = selected_region["id"]
 
+        _ml = is_multilingual(stage_4_input)   # ★ v2.5.0
         system_prompt = build_stage4_prompt(
             region_id=region_id,
             char_map=char_map,
@@ -2280,6 +2744,8 @@ if stage_4_input and api_key:
             style_prompt=selected_style["prompt"],
             custom_instructions=custom_instructions,
             loc_map=loc_map,
+            preserve_setting=preserve_setting,   # ★ v2.5.0
+            multilingual=_ml,                    # ★ v2.5.0
         )
         model_id = MODEL_POLICY["stage_4"]["model"]
         pages = split_into_pages(stage_4_input)
@@ -2292,6 +2758,7 @@ if stage_4_input and api_key:
             "Stage 4: Dialogue Polish", progress_bar, status_area,
             max_tokens=MODEL_POLICY["stage_4"]["max_tokens"],
             stage_key="stage_4", check_mode="en2en",
+            lang_check=_ml,                      # ★ v2.5.0
         )
 
         if results is not None:
@@ -2322,6 +2789,8 @@ if stage_5_input and api_key:
             region_id=region_id,
             char_map=char_map,
             loc_map=loc_map,
+            preserve_setting=preserve_setting,             # ★ v2.5.0
+            multilingual=is_multilingual(stage_5_input),   # ★ v2.5.0
         )
         model_id = MODEL_POLICY["stage_5"]["model"]
 
@@ -2399,7 +2868,8 @@ if _s6_src and _s6_qa and api_key:
                 style_sheet = call_api(
                     client,
                     f"## QA REPORT\n{_s6_qa}\n\n## SCENE HEADINGS (in order)\n{heads}",
-                    build_stage6_style_prompt(region_id, loc_map=loc_map),
+                    build_stage6_style_prompt(region_id, loc_map=loc_map,
+                                              preserve_setting=preserve_setting),  # ★ v2.5.0
                     policy["model"],
                     max_tokens=policy.get("style_max_tokens", 16000),
                 )
@@ -2410,8 +2880,11 @@ if _s6_src and _s6_qa and api_key:
 
         # ③ 페이지별 기계적 수정
         if style_sheet:
+            _ml6 = is_multilingual(base_text)   # ★ v2.5.0
             system_prompt = build_stage6_fix_prompt(
                 region_id, style_sheet, qa_report=_s6_qa, loc_map=loc_map,
+                preserve_setting=preserve_setting,   # ★ v2.5.0
+                multilingual=_ml6,                   # ★ v2.5.0
             )
             pages = split_into_pages(base_text)
             notes, pos = [], 0
@@ -2432,6 +2905,7 @@ if _s6_src and _s6_qa and api_key:
                 max_tokens=policy["max_tokens"],
                 stage_key="stage_6", check_mode="fix",
                 page_notes=notes, locked=locked,
+                lang_check=_ml6,                     # ★ v2.5.0
             )
             if results is not None:
                 st.session_state["stage_6_result"] = normalize_layout("\n\n".join(results))
@@ -2464,18 +2938,40 @@ _audit_source = (
     or st.session_state.get("stage_1_result")
 )
 
+# ★ v2.5.0 — 언어 괄호 대조 (대조표 없이도 동작 · 표시만 하고 자동 수정하지 않음)
+if _audit_source and source_text.strip() and _lang_counts_src:
+    _lt = check_language_tags(source_text, _audit_source, src_is_korean=True)
+    st.markdown("**🌐 언어 표기 대조 — 원고 (베트남어)·(영어) ↔ 결과 (in Vietnamese)·(in English)**")
+    st.table([{"언어": lang, "원고": a, "결과": b, "판정": "✅ 일치" if a == b else "❌ 불일치"}
+              for lang, a, b in _lt["totals"]])
+    if _lt["scenes"]:
+        st.error("씬별로 언어 괄호 수가 다른 곳이 있습니다 (씬 헤딩 순서 기준).")
+        st.table([{"씬 순번": i, "씬 헤딩": h, "언어": lang, "원고": a, "결과": b}
+                  for i, h, lang, a, b in _lt["scenes"][:60]])
+    elif not _lt["scene_compare"]:
+        st.caption("원고와 결과의 씬 수가 달라 씬별 대조는 건너뛰고 전체 수만 비교했습니다.")
+    elif _lt["ok"]:
+        st.caption("모든 씬에서 언어 괄호 수가 원고와 같습니다.")
+
 if not (char_map or count_loc_entries(loc_map)):
     st.caption("⏳ 대조표를 먼저 업로드하세요.")
 elif not _audit_source:
     st.caption("⏳ 번역 결과가 있어야 검수할 수 있습니다.")
 else:
+    if preserve_setting:   # ★ v2.5.0
+        st.caption("🤝 무대 보존 모드 — 한국 장면의 지명·원화·문화어는 정상으로 보고 점검하지 않습니다. "
+                   "한글 원문 잔존·통화 혼용·제작사 표기는 계속 점검합니다.")
     col_a, col_b = st.columns(2)
 
     with col_a:
         if st.button("🔎 검수 실행", key="btn_audit", use_container_width=True):
             st.session_state["audit_report"] = check_glossary_residue(
-                _audit_source, char_map, loc_map
+                _audit_source, char_map, loc_map,
+                preserve_setting=preserve_setting,   # ★ v2.5.0
             )
+            # ★ v2.5.0 — 이름 성조 부호 혼용 (Tuan ↔ Tuấn)
+            st.session_state["audit_report"]["diacritics"] = check_name_diacritics(
+                _audit_source, char_map)
 
     with col_b:
         if st.button("🛠 오표기 강제 치환", key="btn_enforce", use_container_width=True):
@@ -2524,7 +3020,13 @@ else:
                     for ko, en, g in report["missing"][:80]
                 ])
 
-        if not (report["unapplied"] or report["residue"] or report["corrections_left"]):
+        if report.get("diacritics"):   # ★ v2.5.0
+            st.warning("**이름 표기가 성조 부호 유무로 섞여 있습니다** — 대조표 표기로 통일해 주세요")
+            st.table([{"대조표 표기": en, "원고에 섞인 다른 표기": ", ".join(v)}
+                      for en, v in report["diacritics"]])
+
+        if not (report["unapplied"] or report["residue"] or report["corrections_left"]
+                or report.get("diacritics")):
             st.success("✅ 검출된 문제가 없습니다. 로컬라이징이 일관되게 적용되었습니다.")
 
     # ── 강제 치환 결과 ──
@@ -2585,6 +3087,13 @@ if final_result:
     else:
         base_filename = "Screenplay_translated"
 
+    # ★ v2.5.0 — 언어 표기가 있는 원고: 첫 페이지 언어 노트 1회 (다운로드 파일에만 넣는다)
+    _note_lang = base_dialogue_language(selected_region["id"], preserve_setting)
+    if is_multilingual(final_result) and _note_lang:
+        final_result = apply_language_note(final_result, _note_lang, subtitled=preserve_setting)
+        st.caption(f"🌐 다운로드 파일 첫머리에 언어 노트를 넣었습니다 — "
+                   f"\"{final_result.split(chr(10), 1)[0]}\"")
+
     # ★ v2.3.2 — 완료 배너
     if pipeline_status()["complete"]:
         render_status_board("final")
@@ -2637,7 +3146,9 @@ if final_result:
                      "source_sig", "source_scene_count",
                      # ★ v2.4.0
                      "stage_6_result", "stage_6_style_sheet", "partial_stage_6",
-                     "audit_report", "enforced_result", "enforce_log"]:
+                     "audit_report", "enforced_result", "enforce_log",
+                     # ★ v2.5.0
+                     "vn_name_overrides", "vn_name_candidates", "lang_tags_detected"]:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()

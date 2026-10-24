@@ -8,13 +8,39 @@ prompt.py — Translation Pipeline Prompts & Rule Packs
   Stage 3: Voice Rewrite (Opus)
   Stage 4: Dialogue Polish (Opus)
   Stage 5: QA Check (Sonnet)
+  Stage 6: Final Revision (Sonnet)
 
-Target Regions: US / UK / Indonesia
+Target Regions: US / UK / Indonesia / Vietnam
+Setting Modes: Relocation (기본 — 타겟 지역으로 이식) / Preserve (공동제작 — 무대 보존)
 Character Tone Tags: formal / casual / street
 
 ─────────────────────────────────────────────
 CHANGELOG (최신이 위)
 ─────────────────────────────────────────────
+v2.5.0 (2026-10-24)
+  - 기능 추가: 베트남 시장 대응 (Market Lens VN · Writer Engine v4.1.0 원고 정합)
+    · 두 가지 작업 유형 지원
+      A. 현지화 — 한국 무대 원고를 베트남으로 이식 (Vietnam 프로필 + 무대 보존 끔)
+      B. 무대 보존 — 이미 베트남 무대인 한·베 공동제작 원고 (무대 보존 켬)
+  - REGION_PROFILES에 "🇻🇳 Vietnam — Co-production English" (id: vn) 추가
+    · 호칭(anh/chị/em/ông/bà/bác/chú/cô) 보존, VND, 미터법, Day Month Year
+    · 한국 → 베트남 문화 코드 변환표 (현지화 모드 전용)
+    · 2025-07-01 행정개편(군·구 단위 폐지, phường/xã 체계) 반영
+    · 베트남어 문장 생성 금지 — 대사는 영어로만
+  - 신설 상수: PRESERVE_SETTING_RULES (무대 보존 — LOCALIZATION_RULES 대신 주입)
+               PRESERVE_STAGE1_RULE_8 / PRESERVE_STAGE1_RULE_10 (룰 8·10 본문 교체, 번호 유지)
+               PRESERVE_NAME_RULE / VN_RELOCATE_NAME_RULE (대조표에 없는 이름 처리)
+               AP8_PRESERVE (Stage 3 AP-8 본문 교체, 번호 유지)
+               MULTILINGUAL_RULES (STAGE_1 룰 13 — 대사·화면 텍스트 언어 표기)
+               MULTILINGUAL_LOCK (Stage 3·4 — 언어 괄호 잠금, 서툰 영어 보존)
+               STAGE_5_MULTILINGUAL_CHECK / STAGE_5_PRESERVE_NOTE
+               STAGE_6_F10 (언어 괄호 표기 정규화 — 기계적 항목)
+               VN_NAME_SUGGEST_PROMPT (현지화 모드 베트남 이름 후보)
+  - 신설 함수: build_vn_name_suggest_prompt()
+  - build_stage1/3/4/5/6 프롬프트 함수에 디폴트 인자 추가
+    preserve_setting=False, multilingual=False (기존 호출 그대로 동작)
+  - 호환: 무대 보존 끔 + 언어 표기 없음 + 기존 지역이면 v2.4.0과 프롬프트 동일
+
 v2.4.0 (2026-10-04)
   - 기능 추가: STAGE 6 — Final Revision (QA 자동 반영, 기계적 항목만)
     · 신설 상수: STAGE_6_STYLE_SHEET (표기 통일 기준표 작성)
@@ -99,8 +125,8 @@ v2.0
 # ENGINE VERSION (세만틱 버저닝)
 # ═══════════════════════════════════════════════════
 
-ENGINE_VERSION = "2.4.0"
-ENGINE_BUILD_DATE = "2026-10-04"
+ENGINE_VERSION = "2.5.0"
+ENGINE_BUILD_DATE = "2026-10-24"
 
 # ═══════════════════════════════════════════════════
 # REGION PROFILES
@@ -223,6 +249,87 @@ REGION_PROFILES = {
   Saya tidak bisa, Pak.
   (I can't, sir.)
 - When full English adaptation: Translate all dialogue but keep cultural texture
+- A4 page format standard""",
+    },
+
+    # ★ v2.5.0 — Vietnam
+    "🇻🇳 Vietnam — Co-production English": {
+        "id": "vn",
+        "desc": "베트남 시장 / 한·베 공동제작용 — 베트남 파트너가 읽는 영문 원고",
+        "format_note": "International format. A4. Vietnamese names, places and customs.",
+        "language_rules": """
+## REGION: Co-production English (Vietnam Focus)
+- READERS: Vietnamese producers, directors, investors and cast who read English as a working
+  language. Write clear, standard English. Avoid idioms only a native English speaker would catch.
+- Spelling: American English as base.
+- Contractions: Moderate. Natural, never sloppy.
+- Measurements: Metric (kilometers, kilograms, Celsius).
+- Currency: Vietnamese dong. Action lines: "500,000 VND". Dialogue: "dong".
+  Round to dramatically sensible figures.
+- Date format: Day Month Year.
+- ENGLISH ONLY: never write a full Vietnamese sentence. Every line of dialogue is English.
+  A Vietnamese partner will produce the Vietnamese dialogue script separately.
+
+### VIETNAMESE WORDS KEPT AS CULTURAL MARKERS
+- Address terms inside English dialogue: anh, chị, em, ông, bà, bác, chú, cô, thầy
+  (e.g. "Chị Linh, the door is open." / "Bà, sit down.")
+- Everyday words a Vietnamese reader expects to see: phở, bánh mì, cà phê sữa đá, chợ (market),
+  quán (small eatery), hẻm (alley), xe ôm (motorbike taxi), áo dài, Tết.
+  Give brief visual context in the action line at first use; never explain in parentheses.
+- SPELLING LAW — proper names (characters, places, companies) follow the LOCALIZATION MAP exactly.
+  A proper name not in the map is written WITHOUT diacritics (LINH, TUAN, Ho Chi Minh City, Da Nang).
+  Common Vietnamese words listed above keep their standard spelling with diacritics.
+  The same word is spelled the same way on every page.
+
+### VIETNAMESE NAMES
+- Order: family name + middle name + given name (Nguyen Thi Linh). Family names: Nguyen, Tran,
+  Le, Pham, Hoang, Vo, Dang, Bui, Do, Ngo.
+- People are called by the GIVEN name, usually with an address term ("anh Tuan", "chị Linh").
+  Character cues use the given name (LINH), not the family name.
+
+### ADDRESS TERMS — FROM KOREAN
+Apply to dialogue spoken by Vietnamese characters (relocated characters, or "(in Vietnamese)" lines).
+  · 형 / 오빠 (older man, slightly older) → anh      · 누나 / 언니 (older woman) → chị
+  · 동생 / 얘 (younger person) → em                 · 할아버지 (old man) → ông
+  · 할머니 (old woman) → bà
+  · 아저씨 → chú (younger than the speaker's parents) / bác (older than the speaker's parents)
+  · 아주머니 → cô (younger than the speaker's parents) / bác (older)
+  · 선생님 (teacher) → thầy (male) / cô (female)
+  · -씨 → anh / chị + given name, or the given name alone
+  · 선배 → anh / chị + given name
+  · Lovers: anh (man) / em (woman) is natural between couples.
+- If you cannot tell which term fits, use the given name alone. A wrong address term is worse than none.
+- Street-tagged characters: light slang only. Never invent Vietnamese slang.
+
+### CULTURAL TRANSLATION FROM KOREAN — RELOCATION ONLY
+Skip this whole list when the prompt contains "SETTING PRESERVATION — CO-PRODUCTION MODE".
+  · 설날 → Tết                    · 추석 (family gathering) → Tết, or the family's giỗ
+  · 제사 → giỗ (death anniversary) at the family altar (bàn thờ): photos of the dead, incense, fruit, food
+  · 회식 → nhậu (after-work drinking) or a team dinner
+  · 포장마차 → a sidewalk quán nhậu (plastic stools, beer, grilled snacks)
+  · 소주 → beer (bia) or rice wine (rượu)
+  · PC방 → internet café (quán net)    · 노래방 → karaoke
+  · 편의점 → convenience store (Circle K, FamilyMart, Ministop, GS25, 7-Eleven) or minimart (WinMart+)
+  · 라면 → instant noodles (mì gói)
+  · 아파트 단지 → apartment block / condominium; 골목 → hẻm (alley)
+  · 경찰 → Vietnamese police (công an). Do not invent ranks the original does not state.
+  · Korean conglomerates → a FICTIONAL Vietnamese company name. Never cast a real Vietnamese
+    company in a criminal or negative role.
+- ADMINISTRATIVE UNITS: since 1 July 2025 Vietnam has no district level. Cities are divided into
+  wards (phường) and communes (xã); Ho Chi Minh City now also covers former Binh Duong and
+  Ba Ria-Vung Tau. For present-day settings, name a ward or a well-known neighborhood
+  (Thao Dien, Phu My Hung). Characters may still say "District 1" in dialogue as everyday speech.""",
+        "screenplay_format": """
+## SCREENPLAY FORMAT: International (Vietnam)
+- Scene heading: INT. LOCATION - TIME
+- Follow US format as base. Character cue: ALL CAPS, centered.
+- Local place names: Vietnamese names in English form (Ho Chi Minh City, Hanoi, Da Nang, Hoi An).
+- Character cue = given name (LINH, TUAN). Never add a rank or title the original does not state.
+- Language of a line is shown ONLY by a parenthetical on its own line under the cue:
+  CHARACTER
+  (in English)
+  The line, in English.
+- Never write Vietnamese-language dialogue or a "(Vietnamese original + English)" pair.
 - A4 page format standard""",
     },
 }
@@ -392,7 +499,162 @@ invalidates the entire draft.
 - Two different English names for one character or institution"""
 
 
-STAGE_1_RAW_TRANSLATION = """You are a Korean-to-English screenplay translator.
+# ═══════════════════════════════════════════════════
+# ★ v2.5.0 — SETTING PRESERVATION (공동제작 — 무대 보존)
+# 켜면 LOCALIZATION_RULES 대신 주입된다. Stage 1·3·4·5·6 공통.
+# ═══════════════════════════════════════════════════
+
+PRESERVE_SETTING_RULES = """
+## SETTING PRESERVATION — CO-PRODUCTION MODE
+This is a TRANSLATION, not a relocation. The story stays where it is.
+The English script is read by international co-production partners; they must see the same film.
+- Places stay where they are: 호찌민 → Ho Chi Minh City, 하노이 → Hanoi, 서울 → Seoul.
+  Never move a scene to the target region. Never invent a US/UK city, street or landmark.
+- Institutions stay where they are: Vietnamese 공안 → the police (Vietnamese police);
+  Korean 경찰 → the police (Korean police). Never LAPD, NYPD, Met Police or any foreign agency.
+- Korean scenes, Korean characters and their culture stay Korean
+  (Seoul stays Seoul; a Korean student keeps his ramyeon; 소주 stays soju).
+- Vietnamese scenes, Vietnamese characters and their culture stay Vietnamese
+  (the family altar, incense, giỗ, Tết, phở stay what they are).
+- Currency follows the scene: VND in Vietnam, KRW (won) in Korea. Never convert to USD/GBP.
+- Do NOT assign ranks, titles or legal procedures the original does not state.
+  If the original shows authority through action, keep it as action.
+- Never swap a ritual, food or object for a Western equivalent
+  (no crucifix, séance, exorcism, holy water, candles-for-incense, cereal-for-ramyeon).
+- The LOCALIZATION MAP still wins for the spelling of every name and term.
+
+### FORBIDDEN IN THIS MODE
+- Relocating any scene to the target region
+- Converting currency to USD/GBP
+- Western religious or spiritualist substitutes for Asian folk practice
+- Ranks or titles (Detective, Lieutenant, Officer, Judge) not stated in the original"""
+
+# STAGE_1 룰 8·10 — 무대 보존 모드에서 본문만 교체 (번호 유지)
+_STAGE1_RULE_8_DEFAULT = """8. LOCALIZATION IS MANDATORY — this is not a subtitle translation. Korean place names,
+   government bodies, courts, banks, laws, currency, address formats and case numbers must be
+   replaced with the target-region equivalents supplied in the LOCALIZATION MAP.
+   A Korean proper noun left untouched is a defect, not a stylistic choice."""
+
+PRESERVE_STAGE1_RULE_8 = """8. SETTING IS PRESERVED — this is a co-production translation, not a relocation.
+   Place names, institutions, currency and customs stay in the country where each scene happens.
+   Translate them into clear English; never replace them with target-region equivalents."""
+
+_STAGE1_RULE_10_DEFAULT = """10. Anything Korean-specific NOT in the map still must be localized by inference to the same
+   region, consistently across the whole script. Never leave a romanized Korean placeholder."""
+
+PRESERVE_STAGE1_RULE_10 = """10. Anything NOT in the map is translated, not relocated: keep its country, write it in clear
+   English, the same way on every page. Never leave Korean script in the output."""
+
+# 대조표에 없는 이름 처리 (CHARACTER NAME RULES / CHARACTER NAME MAPPING 마지막 줄 교체)
+_NAME_RULE_DEFAULT_STAGE1 = "- Any Korean name NOT in the map: romanize using Revised Romanization."
+_NAME_RULE_DEFAULT_MAP = "Any name NOT listed: romanize using Revised Romanization."
+
+PRESERVE_NAME_RULE = """- Names NOT in the map:
+  · Korean characters → romanize using Revised Romanization.
+  · Vietnamese (or other non-Korean) characters → the Korean spelling is only a transliteration
+    and cannot be reversed reliably (린 may be Linh or Lin). Use the most common spelling
+    WITHOUT diacritics (린 → LINH, 투안 → TUAN, 응우옌 → NGUYEN) and keep it identical on every page.
+  · A character's own word choice stays: if a character says "사이공", write "Saigon"."""
+
+VN_RELOCATE_NAME_RULE = """- Names NOT in the map: this script is being relocated to Vietnam, so every Korean
+  character becomes Vietnamese. Give each a natural Vietnamese given name WITHOUT diacritics
+  (LINH, TUAN, MAI, HUNG) and use that same name on every page. Role words (엄마, 할머니, 형사1)
+  become English role names (MOM, GRANDMA, OFFICER 1) — never a personal name."""
+
+
+# ═══════════════════════════════════════════════════
+# ★ v2.5.0 — MULTILINGUAL (대사·화면 텍스트 언어 표기)
+# 원고에 (베트남어) (영어) · 베트남어 같은 표기가 있을 때만 주입된다.
+# ═══════════════════════════════════════════════════
+
+MULTILINGUAL_RULES = """
+## 13. LANGUAGE TAGS — MULTILINGUAL DIALOGUE (v2.5.0)
+The original marks the spoken language of some lines. The dialogue text itself is already a
+Korean translation of what is said. Convert the tags exactly:
+  · no tag                      → no tag (the scene's base language, noted once on the title page)
+  · (베트남어)                   → (in Vietnamese)
+  · (베트남어, 작게)             → (in Vietnamese, quietly)   — language first, acting note after a comma
+  · (영어)                       → (in English)               — NEVER drop this tag
+  · (인도네시아어) (일본어) etc. → (in Indonesian) (in Japanese) — same rule
+  · [문자 · 베트남어] '…'        → ON SCREEN — TEXT MESSAGE (IN VIETNAMESE): "…"
+  · INSERT — 핸드폰 문자 화면 · 베트남어 … [/INSERT]
+                                → INSERT — TEXT MESSAGE (IN VIETNAMESE) … BACK TO SCENE
+RULES
+a. Exactly ONE language tag per tagged dialogue block — never add one, never remove one.
+b. The tag goes on its own line directly under the character cue. Never as a cue extension
+   ("LINH (IN VIETNAMESE)" is wrong).
+c. Write the dialogue in English only. Never generate a Vietnamese (or other non-English) sentence,
+   never add an "(original + translation)" pair, never add SUBTITLE: lines.
+d. "(in English)" lines keep the speaker's limited English exactly as limited as the original
+   (broken grammar, missing words, hesitation). Do not make it fluent.
+e. The language barrier is part of the story: keep who understands whom."""
+
+MULTILINGUAL_LOCK = """
+## LANGUAGE TAGS ARE LOCKED (v2.5.0)
+- Every language parenthetical — "(in Vietnamese)", "(in English)", "(in Korean)", etc. — stays
+  exactly where it is, worded exactly as it is, one per dialogue block. Never add or remove one.
+- Never turn a tag into a cue extension. Never write non-English dialogue or SUBTITLE: lines.
+- Lines tagged "(in English)" are spoken by characters with limited English. Their broken English
+  is characterization: do NOT polish, complete or smooth it (AP-5 and DP-1~6 do not apply to them).
+- ON SCREEN / INSERT text marked (IN VIETNAMESE) keeps that marker."""
+
+# Stage 3 AP-8 — 무대 보존 모드에서 본문만 교체 (번호 유지)
+_AP8_DEFAULT = """### AP-8: Cultural Literalism
+❌ "He eats ramyeon alone." (Korean emotional code: loneliness/self-pity)
+✅ Adapt to target region's equivalent emotional shorthand if the cultural code won't read.
+   US: "He eats cereal over the sink." or keep ramyeon if the setting warrants it.
+   UK: "He eats beans on toast. Alone."\x20
+   ID: "He eats indomie from the pot."
+RULE: Preserve the EMOTION, not necessarily the literal object, unless setting requires it."""
+# ※ 위 UK 줄 끝의 \x20 은 원본 STAGE_3 문구의 줄끝 공백과 글자 단위로 일치시키기 위한 것 (삭제 금지)
+
+AP8_PRESERVE = """### AP-8 (CO-PRODUCTION MODE): Keep the culture, fix only the English
+The objects, rituals and food of the original stay exactly what they are.
+Translate them clearly; never swap them for a Western equivalent.
+❌ "Grandma lights a candle beneath a crucifix. She begins a séance."
+✅ "Grandma plants a stick of incense before the family altar. The smoke bends toward the stairs."
+❌ "Minsu eats cereal over the sink."
+✅ "Minsu eats ramyeon straight from the pot."
+RULE: Preserve the EMOTION and the literal object. Clarity comes from the action line, not substitution."""
+
+_STAGE3_CHANGE_CULTURE_DEFAULT = "- Cultural references that won't land (adapt per region profile)"
+_STAGE3_CHANGE_CULTURE_PRESERVE = ("- Cultural references that won't land — clarify them through the action line; "
+                                   "never replace them (co-production mode)")
+
+STAGE_5_PRESERVE_NOTE = """
+## QA NOTE — CO-PRODUCTION MODE (v2.5.0)
+This screenplay was translated in SETTING PRESERVATION mode. Korean scenes legitimately keep
+Seoul place names, won (KRW) and Korean customs; Vietnamese scenes keep Vietnamese ones.
+Do NOT report those under LOCALIZATION ISSUES. Report instead:
+- any scene moved to the target region, any foreign agency (LAPD etc.), any USD/GBP conversion
+- any Western ritual substituted for Asian folk practice
+- any rank or title the original does not state
+Korean script (hangul) left in the text is still a defect."""
+
+STAGE_5_MULTILINGUAL_CHECK = """
+## ADDITIONAL CHECK LIST
+### MULTILINGUAL (v2.5.0)
+- [ ] Every "(in Vietnamese)" / "(in English)" tag from the source survives, one per dialogue block
+- [ ] Language tags sit on their own line under the cue, not as cue extensions
+- [ ] No Vietnamese-language sentences were generated
+- [ ] "(in English)" lines keep the character's limited English — not polished into fluency
+- [ ] No Vietnamese place/institution relocated to the target region (preserve mode)
+- [ ] No Western ritual substituted for Vietnamese folk practice (altar, incense)
+- [ ] Vietnamese names spelled exactly as in the map; diacritics consistent
+- [ ] No ranks or legal procedures added that the source did not state
+Report MULTILINGUAL problems under LANGUAGE ISSUES, prefixed "MULTILINGUAL:"."""
+
+STAGE_6_F10 = """
+## ADDITIONAL PERMITTED FIX (v2.5.0)
+F10. Language tags — normalize variants to the canonical form:
+     "(Vietnamese)", "(in vietnamese)", "(speaking Vietnamese)" → "(in Vietnamese)"
+     (same for English, Korean and other languages).
+     Move a tag written on the cue line ("LINH (IN VIETNAMESE)") to its own parenthetical line
+     directly under the cue. Never add or remove a tag. Never write non-English dialogue.
+F10 is permitted in addition to F1–F9."""
+
+
+STAGE_1_RAW_TRANSLATION ="""You are a Korean-to-English screenplay translator.
 Your job is ACCURATE TRANSLATION — not rewriting.
 
 ## TASK
@@ -721,26 +983,74 @@ Be thorough but fair. A score of 8+ means ready for submission."""
 # PROMPT BUILDER FUNCTIONS
 # ═══════════════════════════════════════════════════
 
+def _swap(text: str, old: str, new: str) -> str:
+    """★ v2.5.0 — 룰 본문 교체. 원문이 바뀌어 교체 대상이 없으면 조용히 넘어가지 않고 오류를 낸다."""
+    if old not in text:
+        raise ValueError(f"prompt.py 룰 교체 대상을 찾지 못했습니다: {old[:60]!r}")
+    return text.replace(old, new)
+
+
+def _name_rule(region_id: str, preserve_setting: bool) -> str:
+    """★ v2.5.0 — 대조표에 없는 이름 처리 규칙. 기본(기존 동작)이면 빈 문자열."""
+    if preserve_setting:
+        return PRESERVE_NAME_RULE
+    if region_id == "vn":
+        return VN_RELOCATE_NAME_RULE
+    return ""
+
+
+def _setting_rules(preserve_setting: bool) -> str:
+    """★ v2.5.0 — 무대 보존 모드면 PRESERVE_SETTING_RULES, 아니면 기존 LOCALIZATION_RULES."""
+    return PRESERVE_SETTING_RULES if preserve_setting else LOCALIZATION_RULES
+
+
+def _stage1_base(region_id: str, preserve_setting: bool) -> str:
+    base = STAGE_1_RAW_TRANSLATION
+    if preserve_setting:
+        base = _swap(base, _STAGE1_RULE_8_DEFAULT, PRESERVE_STAGE1_RULE_8)
+        base = _swap(base, _STAGE1_RULE_10_DEFAULT, PRESERVE_STAGE1_RULE_10)
+    rule = _name_rule(region_id, preserve_setting)
+    if rule:
+        base = _swap(base, _NAME_RULE_DEFAULT_STAGE1, rule)
+    return base
+
+
+def _stage3_base(preserve_setting: bool) -> str:
+    base = STAGE_3_VOICE_REWRITE
+    if preserve_setting:
+        base = _swap(base, _AP8_DEFAULT, AP8_PRESERVE)
+        base = _swap(base, _STAGE3_CHANGE_CULTURE_DEFAULT, _STAGE3_CHANGE_CULTURE_PRESERVE)
+    return base
+
+
 def build_stage1_prompt(
     region_id: str,
     char_map: dict,
     style_prompt: str,
     custom_instructions: str = "",
-    loc_map: dict = None
+    loc_map: dict = None,
+    preserve_setting: bool = False,   # ★ v2.5.0
+    multilingual: bool = False,       # ★ v2.5.0
 ) -> str:
     """Build Stage 1 (Raw Translation) system prompt."""
     region = _get_region(region_id)
-    parts = [STAGE_1_RAW_TRANSLATION]
+    parts = [_stage1_base(region_id, preserve_setting)]
 
     # Region language rules
     parts.append(region["language_rules"])
 
     # ★ v2.2 — Localization rules (always on)
-    parts.append(LOCALIZATION_RULES)
+    # ★ v2.5.0 — 무대 보존 모드면 PRESERVE_SETTING_RULES로 대체
+    parts.append(_setting_rules(preserve_setting))
+
+    # ★ v2.5.0 — 룰 13: 언어 표기 (원고에 표기가 있을 때만)
+    if multilingual:
+        parts.append(MULTILINGUAL_RULES)
 
     # Character map
     if char_map:
-        char_section = _build_char_map_section(char_map)
+        char_section = _build_char_map_section(
+            char_map, name_rule=_name_rule(region_id, preserve_setting))
         parts.append(char_section)
 
     # ★ v2.2 — Localization map (extras / places / corrections)
@@ -765,26 +1075,33 @@ def build_stage3_prompt(
     char_tones: dict,
     style_prompt: str,
     custom_instructions: str = "",
-    loc_map: dict = None
+    loc_map: dict = None,
+    preserve_setting: bool = False,   # ★ v2.5.0
+    multilingual: bool = False,       # ★ v2.5.0
 ) -> str:
     """Build Stage 3 (Voice Rewrite) system prompt.
-    
+
     Args:
         char_tones: dict of {english_name: tone_tag} e.g. {"HARRY": "casual", "PROFESSOR KIM": "formal"}
     """
     region = _get_region(region_id)
-    parts = [STAGE_3_VOICE_REWRITE]
+    parts = [_stage3_base(preserve_setting)]
 
     # Region rules
     parts.append(region["language_rules"])
     parts.append(region["screenplay_format"])
 
     # ★ v2.2 — Localization rules
-    parts.append(LOCALIZATION_RULES)
+    parts.append(_setting_rules(preserve_setting))
+
+    # ★ v2.5.0 — 언어 괄호 잠금
+    if multilingual:
+        parts.append(MULTILINGUAL_LOCK)
 
     # Character map
     if char_map:
-        parts.append(_build_char_map_section(char_map))
+        parts.append(_build_char_map_section(
+            char_map, name_rule=_name_rule(region_id, preserve_setting)))
 
     # ★ v2.2 — Localization map
     loc_section = build_localization_section(loc_map)
@@ -817,7 +1134,9 @@ def build_stage4_prompt(
     char_tones: dict,
     style_prompt: str,
     custom_instructions: str = "",
-    loc_map: dict = None
+    loc_map: dict = None,
+    preserve_setting: bool = False,   # ★ v2.5.0
+    multilingual: bool = False,       # ★ v2.5.0
 ) -> str:
     """Build Stage 4 (Dialogue Polish) system prompt."""
     region = _get_region(region_id)
@@ -827,11 +1146,16 @@ def build_stage4_prompt(
     parts.append(region["language_rules"])
 
     # ★ v2.2 — Localization rules
-    parts.append(LOCALIZATION_RULES)
+    parts.append(_setting_rules(preserve_setting))
+
+    # ★ v2.5.0 — 언어 괄호 잠금 · 서툰 영어 보존
+    if multilingual:
+        parts.append(MULTILINGUAL_LOCK)
 
     # Character map + tones
     if char_map:
-        parts.append(_build_char_map_section(char_map))
+        parts.append(_build_char_map_section(
+            char_map, name_rule=_name_rule(region_id, preserve_setting)))
 
     # ★ v2.2 — Localization map
     loc_section = build_localization_section(loc_map)
@@ -857,16 +1181,29 @@ def build_stage4_prompt(
     return "\n".join(parts)
 
 
-def build_stage5_prompt(region_id: str, char_map: dict = None, loc_map: dict = None) -> str:
+def build_stage5_prompt(region_id: str, char_map: dict = None, loc_map: dict = None,
+                        preserve_setting: bool = False,   # ★ v2.5.0
+                        multilingual: bool = False,       # ★ v2.5.0
+                        ) -> str:
     """Build Stage 5 (QA Check) system prompt. (v2.2 — loc_map 대조 검증)"""
     region = _get_region(region_id)
     parts = [STAGE_5_QA_CHECK]
     parts.append(region["language_rules"])
     parts.append(region["screenplay_format"])
 
+    # ★ v2.5.0 — 무대 보존 모드: 한국 장면의 한국 요소를 결함으로 보지 않게 한다
+    if preserve_setting:
+        parts.append(PRESERVE_SETTING_RULES)
+        parts.append(STAGE_5_PRESERVE_NOTE)
+
+    # ★ v2.5.0 — 언어 표기 점검
+    if multilingual:
+        parts.append(STAGE_5_MULTILINGUAL_CHECK)
+
     # ★ v2.2 — QA가 대조할 매핑 원본을 함께 전달
     if char_map:
-        parts.append(_build_char_map_section(char_map))
+        parts.append(_build_char_map_section(
+            char_map, name_rule=_name_rule(region_id, preserve_setting)))
     loc_section = build_localization_section(loc_map)
     if loc_section:
         parts.append(loc_section)
@@ -942,10 +1279,15 @@ Return the COMPLETE page with only the permitted corrections applied — from th
 Output ONLY the screenplay text."""
 
 
-def build_stage6_style_prompt(region_id: str, loc_map: dict = None) -> str:
+def build_stage6_style_prompt(region_id: str, loc_map: dict = None,
+                              preserve_setting: bool = False,   # ★ v2.5.0
+                              ) -> str:
     """★ v2.4.0 — Stage 6 스타일 시트 생성용 시스템 프롬프트."""
     region = _get_region(region_id)
     parts = [STAGE_6_STYLE_SHEET, region["screenplay_format"]]
+    # ★ v2.5.0 — 무대 보존 모드: 장소명 통일이 장소를 옮기지 않게 한다
+    if preserve_setting:
+        parts.append(PRESERVE_SETTING_RULES)
     loc_section = build_localization_section(loc_map)
     if loc_section:
         parts.append(loc_section)
@@ -957,21 +1299,61 @@ def build_stage6_fix_prompt(
     style_sheet: str,
     qa_report: str = "",
     loc_map: dict = None,
+    preserve_setting: bool = False,   # ★ v2.5.0
+    multilingual: bool = False,       # ★ v2.5.0
 ) -> str:
     """★ v2.4.0 — Stage 6 자동 반영(기계적 수정) 시스템 프롬프트."""
     region = _get_region(region_id)
     parts = [STAGE_6_AUTO_FIX, region["screenplay_format"]]
+    # ★ v2.5.0 — F10 언어 괄호 정규화 (원고에 언어 표기가 있을 때만)
+    if multilingual:
+        parts.append(STAGE_6_F10)
+        parts.append(MULTILINGUAL_LOCK)
+    if preserve_setting:
+        parts.append(PRESERVE_SETTING_RULES)
     parts.append(f"\n## STYLE SHEET — FOLLOW EXACTLY\n{style_sheet.strip()}")
     loc_section = build_localization_section(loc_map)
     if loc_section:
         parts.append(loc_section)
     if qa_report:
+        scope = "F1–F10" if multilingual else "F1–F9"
         parts.append(
             "\n## QA REPORT — REFERENCE ONLY\n"
-            "Apply only the items that fall under F1–F9. Ignore every other suggestion.\n"
+            f"Apply only the items that fall under {scope}. Ignore every other suggestion.\n"
             f"{qa_report.strip()}"
         )
     return "\n".join(parts)
+
+
+# ═══════════════════════════════════════════════════
+# ★ v2.5.0 — 베트남 이름 후보 (현지화 모드)
+# 한국 인물을 베트남 인물로 옮길 때, 이름을 페이지마다 따로 짓지 않도록
+# Stage 1 전에 한 번만 후보를 만들어 대조표로 고정한다.
+# ═══════════════════════════════════════════════════
+
+VN_NAME_SUGGEST_PROMPT = """You are a Vietnamese casting and naming consultant for a film being relocated
+from Korea to Vietnam. You receive Korean character names with a few of their lines for context.
+For EACH name, propose one Vietnamese identity.
+
+## RULES
+- Personal names → a natural, contemporary Vietnamese full name (family + middle + given name)
+  that fits the character's apparent gender, age and class. Cue name = the GIVEN name only.
+- Role words (엄마, 아빠, 할머니, 형사1, 의사, 남자1) → an English role name for the cue
+  (MOM, DAD, GRANDMA, OFFICER 1, DOCTOR, MAN 1). Full name: "-".
+- Cue names: ALL CAPS, ASCII only, NO diacritics (LINH, TUAN, MAI). Full names WITH diacritics.
+- Two characters must never share a cue name.
+- Do not use the names of famous real Vietnamese people.
+
+## OUTPUT — exactly one line per input name, nothing else (no header, no commentary, no code fence):
+Korean name | CUE NAME | Full Vietnamese name | one-line reason
+Example:
+민수 | MINH | Nguyễn Văn Minh | young man, everyday name
+할머니 | GRANDMA | - | role word"""
+
+
+def build_vn_name_suggest_prompt() -> str:
+    """★ v2.5.0 — 베트남 이름 후보 생성용 시스템 프롬프트."""
+    return VN_NAME_SUGGEST_PROMPT
 
 
 # ═══════════════════════════════════════════════════
@@ -987,10 +1369,14 @@ def _get_region(region_id: str) -> dict:
     return REGION_PROFILES["🇺🇸 US — Hollywood Standard"]
 
 
-def _build_char_map_section(char_map: dict) -> str:
-    """Build character name mapping section for prompts."""
+def _build_char_map_section(char_map: dict, name_rule: str = "") -> str:
+    """Build character name mapping section for prompts.
+
+    ★ v2.5.0 — name_rule: 대조표에 없는 이름 처리 규칙 (무대 보존 / 베트남 현지화).
+               비어 있으면 기존 문구(Revised Romanization) 그대로.
+    """
     char_lines = "\n".join([f"  · {ko} → {en}" for ko, en in char_map.items()])
-    return f"""
+    section = f"""
 ## CHARACTER NAME MAPPING — MANDATORY
 Replace ALL Korean character names with their English equivalents:
 {char_lines}
@@ -999,7 +1385,10 @@ Apply to: dialogue cues, action lines, parentheticals, all mentions.
 Short forms and kinship words in this list (e.g. 아내, 둘째, 큰아들) map to that character
 ONLY when the context refers to that specific person — otherwise translate them normally.
 Adapt Korean honorific usage (e.g., "수현아", "서연이 언니") into natural English per region rules.
-Any name NOT listed: romanize using Revised Romanization."""
+{_NAME_RULE_DEFAULT_MAP}"""
+    if name_rule:
+        section = _swap(section, _NAME_RULE_DEFAULT_MAP, name_rule.strip())
+    return section
 
 
 def build_localization_section(loc_map: dict) -> str:

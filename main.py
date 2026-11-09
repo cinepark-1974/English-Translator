@@ -1885,7 +1885,7 @@ def generate_docx(text: str) -> bytes:
 # ═══════════════════════════════════════════════════
 
 # ── Header ──
-render_header("ENGLISH-TRANSLATOR", note=f"v{VERSION} · 5-Stage Native Polish Pipeline")
+render_header("ENGLISH-TRANSLATOR", tagline="CO-PRODUCTION SUBMISSION", note=f"v{VERSION} · 5-Stage Native Polish Pipeline")
 
 st.markdown("---")
 

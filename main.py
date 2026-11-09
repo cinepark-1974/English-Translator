@@ -119,6 +119,7 @@ v2.0
 """
 
 import streamlit as st
+from bj_header import render_header  # 공통 헤더 (Writer Engine 기준)
 import anthropic
 import re
 import io
@@ -1884,14 +1885,7 @@ def generate_docx(text: str) -> bytes:
 # ═══════════════════════════════════════════════════
 
 # ── Header ──
-st.markdown(f"""
-<div class="main-header">
-    <div class="brand-name">B L U E &nbsp; J E A N S &nbsp; P I C T U R E S</div>
-    <h1>ENGLISH-TRANSLATOR</h1>
-    <div class="tagline">Y O U N G &nbsp; · &nbsp; V I N T A G E &nbsp; · &nbsp; F R E E &nbsp; · &nbsp; I N N O V A T I V E</div>
-    <div class="version-badge">v{VERSION} — 5-Stage Native Polish Pipeline</div>
-</div>
-""", unsafe_allow_html=True)
+render_header("ENGLISH-TRANSLATOR", note=f"v{VERSION} · 5-Stage Native Polish Pipeline")
 
 st.markdown("---")
 
